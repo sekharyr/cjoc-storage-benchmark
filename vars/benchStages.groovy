@@ -54,9 +54,14 @@ def call(Map cfg) {
                 node(agentLabel) {
                     unstash 'src'
                     def mvnRepo = cfg.coldCache ? "../.m2-cache-${i}" : '../.m2-cache-shared'
+                    // MAVEN_CONFIG="" — the maven:* base image (recommended for the
+                    // bench-agent jnlp container) sets MAVEN_CONFIG=/root/.m2, which
+                    // mvnw wrongly folds into its own arg list, producing "Unknown
+                    // lifecycle phase /root/.m2". Same fix as the Dockerfile's build
+                    // stage. Found via a real failed run against the EBS controller.
                     bench.timed("unit-test-${i}") {
                         dir('workload') {
-                            sh "./mvnw -B -Dmaven.repo.local=${mvnRepo} clean test"
+                            sh "MAVEN_CONFIG='' ./mvnw -B -Dmaven.repo.local=${mvnRepo} clean test"
                         }
                     }
                     // spring-petclinic-rest has no failsafe plugin or Testcontainers
@@ -69,7 +74,7 @@ def call(Map cfg) {
                     // that follow.
                     bench.timed("integration-test-${i}") {
                         dir('workload') {
-                            sh "./mvnw -B -Dmaven.repo.local=${mvnRepo} verify"
+                            sh "MAVEN_CONFIG='' ./mvnw -B -Dmaven.repo.local=${mvnRepo} verify"
                         }
                     }
                     archiveArtifacts artifacts: 'workload/target/*.jar', fingerprint: true, allowEmptyArchive: true
