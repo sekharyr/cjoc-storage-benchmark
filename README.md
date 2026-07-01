@@ -186,12 +186,19 @@ one(s) relevant to what you're checking).
   repeated log text can. **This one is different from Log flood and
   Integration test repeat in a way that matters**: those two don't
   permanently grow `JENKINS_HOME` usage, but archived artifacts land in
-  `JENKINS_HOME/jobs/<job>/builds/<n>/archive/` and **accumulate forever**
-  across every build unless a retention policy (`buildDiscarder`) is
-  configured. Do the arithmetic — `CONCURRENCY × ARTIFACT_COPY_COUNT × jar
-  size` — against real available disk before pushing this parameter high,
-  especially if you're running ≥5 repeats per matrix cell as recommended
-  above. Timed as `archive-artifacts-${i}` (the controller-side write); the
+  `JENKINS_HOME/jobs/<job>/builds/<n>/archive/` and would otherwise
+  **accumulate forever** — both Jenkinsfiles now set
+  `buildDiscarder(logRotator(numToKeepStr: '5'))`, keeping only the last 5
+  builds. That's a deliberately tight number given `ARTIFACT_COPY_COUNT`
+  exists specifically to multiply artifact volume — but it's in tension with
+  "report median/p95 across ≥5 runs per matrix cell" above: with retention
+  at 5, your 5th run can already be evicting your 1st by the time you go to
+  aggregate. Either raise `numToKeepStr` if you need more history retained
+  (do the disk-arithmetic below first), or aggregate promptly after each
+  batch of runs rather than letting them pile up. Do the arithmetic —
+  `CONCURRENCY × ARTIFACT_COPY_COUNT × jar size` — against real available
+  disk before pushing this parameter high. Timed as `archive-artifacts-${i}`
+  (the controller-side write); the
   local duplication step that creates the copies isn't separately timed,
   since it's agent-local disk work, same category as unit-test/soak.
 - Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_MB` MB — do that

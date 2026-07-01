@@ -18,7 +18,11 @@ properties([
         string(name: 'INTEGRATION_TEST_REPEAT', defaultValue: '1', description: 'Re-run the real mvnw verify this many times per build branch — genuine Maven/JVM console output repeated, not synthetic flood text, as a second source of concurrent JENKINS_HOME log pressure alongside Log flood. Default 1 = no change from today\'s single run.'),
         string(name: 'ARTIFACT_COPY_COUNT', defaultValue: '1', description: 'Archive this many copies of the same built jar per build branch (default 1 = just the real jar, unchanged). Each copy is a genuine controller-side write to JENKINS_HOME/jobs/<job>/builds/<n>/archive/ - real compressed binary content, a third distinct kind of write pressure alongside Log flood (text) and Integration test repeat (Maven output). WARNING: unlike those, archived artifacts ACCUMULATE FOREVER on JENKINS_HOME across builds unless a retention policy is configured - do the arithmetic (CONCURRENCY x this x jar size) before pushing this high.')
     ]),
-    durabilityHint(env.BENCH_DURABILITY_HINT)
+    durabilityHint(env.BENCH_DURABILITY_HINT),
+    // Archived artifacts (bench-metrics.csv, trivy reports, and especially the
+    // jars ARTIFACT_COPY_COUNT can multiply) accumulate on JENKINS_HOME forever
+    // otherwise — keep the last 5 builds' worth, not unlimited history.
+    buildDiscarder(logRotator(numToKeepStr: '5'))
 ])
 
 benchStages(
