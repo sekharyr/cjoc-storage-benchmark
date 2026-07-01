@@ -36,7 +36,21 @@ def call(Map cfg) {
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
     def trivyHardFail = cfg.trivyHardFail ?: false
     def trivySeverity = cfg.trivySeverity ?: 'CRITICAL,HIGH'
-    def storageResourceId = cfg.storageResourceId ?: ''
+    // Hardcoded to this specific 3-controller fleet's actual AWS resource IDs
+    // (found via kubectl get pvc/pv + aws fsx describe-volumes against the real
+    // cluster). Jenkinsfile/Jenkinsfile.max-survivability are the SAME file
+    // shared across all 3 controllers, so a single Jenkinsfile defaultValue
+    // can't hold three different IDs — STORAGE_CLASS already identifies which
+    // controller a given job runs on, so default from that instead. An
+    // explicit STORAGE_RESOURCE_ID param still overrides this if set. If these
+    // controllers/volumes are ever recreated, these values go stale and need
+    // updating here.
+    def defaultStorageResourceIds = [
+        'ebs-gp3-sc': 'vol-01d464727c847df38',
+        'efs-sc'    : 'fs-0246a526db0adaedf',
+        'openzfs-sc': 'fs-01bbc0b1019aac1c4'
+    ]
+    def storageResourceId = cfg.storageResourceId ?: defaultStorageResourceIds[cfg.storageClass] ?: ''
     // Pinned together since buildctl and the buildkitd sidecar must be compatible versions.
     def buildkitVersion = 'v0.20.0'
     def craneVersion = 'v0.20.2'

@@ -93,20 +93,32 @@ results/                         run output lands here (gitignored contents)
    you're pushing to a different namespace/repo. Docker/OCI repository names
    must be all-lowercase; the build fails fast at `buildctl build` (before
    `crane` even runs) if the tag isn't.
-7. **CloudWatch access (optional, for automatic Layer 4 collection).** Set
-   `STORAGE_RESOURCE_ID` to the AWS resource ID backing *this specific*
-   controller's `JENKINS_HOME` PVC — `vol-xxxx` for the EBS controller,
-   `fs-xxxx` for the EFS/FSx ones (find it via
-   `kubectl get pv $(kubectl get pvc jenkins-home -n <controller-ns> -o
-   jsonpath='{.spec.volumeName}') -o yaml`, look for `volumeHandle`). Leave it
-   blank to skip this stage entirely — everything else in the pipeline still
-   runs and publishes metrics normally. If set, the `bench-agent` pod needs
-   AWS credentials with `cloudwatch:GetMetricStatistics` — **IRSA** (an IAM
-   role annotated on the pod's Kubernetes ServiceAccount) is the recommended,
+7. **CloudWatch access (optional, for automatic Layer 4 collection).**
+   `vars/benchStages.groovy` hardcodes this fleet's actual resource IDs in a
+   map keyed by `STORAGE_CLASS`, found via `kubectl get pvc -n cloudbees-core`
+   + `kubectl get pv ... -o jsonpath='{.spec.csi.volumeHandle}'` (+ `aws fsx
+   describe-volumes` for FSx, since its `volumeHandle` is a volume ID, not the
+   filesystem ID CloudWatch's `AWS/FSx` metrics actually key on):
+   - EBS (`ebs-gp3-sc`): `vol-01d464727c847df38`
+   - EFS (`efs-sc`): `fs-0246a526db0adaedf` (the CSI driver's `volumeHandle`
+     is `efs:fs-xxxx::fsap-xxxx` — the filesystem ID is the 2nd colon-separated
+     field, not the 1st)
+   - FSx (`openzfs-sc`): `fs-01bbc0b1019aac1c4`
+
+   Leave the job's `STORAGE_RESOURCE_ID` parameter blank to use this
+   auto-selected default — it only needs to be set explicitly to override it
+   (e.g. testing against a different volume). **These are specific to this
+   fleet's current volumes** — if any controller's PVC is ever recreated
+   (new cluster, disaster recovery, etc.), update the map in
+   `vars/benchStages.groovy` to match.
+
+   If set (explicitly or via the default), the `bench-agent` pod needs AWS
+   credentials with `cloudwatch:GetMetricStatistics` — **IRSA** (an IAM role
+   annotated on the pod's Kubernetes ServiceAccount) is the recommended,
    credential-free way to provide this on EKS; injecting static access keys
    via a Jenkins credential is the fallback if IRSA isn't set up. A missing
-   `STORAGE_RESOURCE_ID` or failed AWS auth only skips this one stage — it
-   doesn't fail the rest of the run or block metrics already published.
+   resource ID or failed AWS auth only skips this one stage — it doesn't fail
+   the rest of the run or block metrics already published.
 
 ## Running the matrix
 
