@@ -116,16 +116,19 @@ def call(Map cfg) {
             branches["log-flood-${i}"] = {
                 node(agentLabel) {
                     bench.timed("log-flood-${i}") {
-                        // A realistic, log-shaped line (timestamp/level/context/kv pairs)
-                        // repeated via `yes`, capped at exactly N MiB by `head -c <N>M` —
-                        // verified locally to produce exactly the requested byte count.
-                        // Not a wall of repeated 'x' characters: real log text has varied
-                        // structure and doesn't compress the way one repeated byte does,
-                        // so this is a closer proxy for genuine build-log write patterns.
+                        // Genuinely varying, log-shaped lines (timestamp/level/context/kv
+                        // pairs with a real per-line sequence number and derived values),
+                        // capped at exactly N MiB by `head -c <N>M`. Earlier version used
+                        // `yes` to repeat one fixed line — fast, but a purely periodic
+                        // repeated string compresses just as well as a repeated single
+                        // byte would, so it wasn't actually a closer proxy for real
+                        // (much less compressible) log content, just more legible. awk's
+                        // own internal loop generates unique lines without the overhead of
+                        // spawning a subprocess per line, which a shell for-loop calling
+                        // `date`/expr per iteration would incur.
                         sh """
                             ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-                            line="\$ts INFO [log-flood-${i}] processing build step status=OK duration_ms=42 items_processed=12345 queue_depth=7"
-                            yes "\$line" | head -c ${logFloodSizeMb}M
+                            awk -v ts="\$ts" -v label="log-flood-${i}" 'BEGIN { for (n=1; ; n++) print ts, "INFO", "["label"]", "seq="n, "status=OK", "duration_ms="((n%100)+1), "items_processed="(n*7), "queue_depth="(n%20) }' | head -c ${logFloodSizeMb}M
                         """
                     }
                     stash name: "metrics-log-flood-${i}", includes: 'bench-metrics.csv', allowEmpty: true
