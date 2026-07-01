@@ -62,7 +62,7 @@ results/                         run output lands here (gitignored contents)
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
    `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, and
-   `LOG_FLOOD_SECONDS` for the rest of the matrix.
+   `LOG_FLOOD_SIZE_GB` for the rest of the matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
    sidecar container (`buildctl` talking to it over `localhost`, since
@@ -146,10 +146,10 @@ EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   CloudWatch data for the same time window before concluding the storage
   classes perform the same — it could mean the PVCs/StorageClasses aren't as
   differentiated as expected, not that this pipeline failed to measure them.
-- `LOG_FLOOD_SECONDS` is tuned to ~2MB/s per branch (not raw `yes`, which
-  measured multiple GB/s locally) specifically to avoid filling the
-  controller's actual disk — raising `CONCURRENCY` and `LOG_FLOOD_SECONDS`
-  both scale total log volume linearly; do the arithmetic against the
-  controller's actual available disk before pushing either one very high.
+- Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_GB` GB (e.g.
+  `CONCURRENCY=4`, `LOG_FLOOD_SIZE_GB=1` writes 4GB total, 1GB per branch,
+  concurrently) — do that arithmetic against the controller's actual
+  available disk before pushing either value very high, since this is a
+  fixed, deliberate volume rather than a rate-limited/duration-bound one.
 
 See the design memo for the full rationale behind each of these.

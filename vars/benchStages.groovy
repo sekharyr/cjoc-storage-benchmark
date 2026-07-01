@@ -14,7 +14,7 @@ def call(Map cfg) {
     def agentLabel = cfg.agentLabel ?: 'bench-agent'
     def concurrency = (cfg.concurrency ?: '1') as int
     def soakSeconds = cfg.soakDurationSeconds ?: 120
-    def logFloodSeconds = (cfg.logFloodSeconds ?: 30) as int
+    def logFloodSizeGb = (cfg.logFloodSizeGb ?: 1) as int
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
@@ -97,27 +97,25 @@ def call(Map cfg) {
         // disk — none of them actually touch JENKINS_HOME (see the README's "Before
         // you trust a number" note on this). Build console logs are one of the few
         // things Jenkins genuinely writes to JENKINS_HOME incrementally as steps run,
-        // on the *controller*. Running CONCURRENCY branches that each flood their own
-        // stdout for logFloodSeconds means the controller receives that many
-        // simultaneous high-volume log streams at once — real, sustained, concurrent
-        // write pressure on the storage class actually under test, independent of
-        // Maven/Docker/HTTP load.
+        // on the *controller*. Running CONCURRENCY branches that each write a fixed
+        // logFloodSizeGb of console output means the controller receives that many
+        // simultaneous large log streams at once — real, concurrent write pressure on
+        // the storage class actually under test, independent of Maven/Docker/HTTP
+        // load. A fixed total size (CONCURRENCY x logFloodSizeGb) rather than a
+        // duration is deliberate — "how long to write N GB" is a more comparable,
+        // reproducible metric across storage classes than "however much fits in N
+        // seconds," which conflates the answer with the a-priori-unknown throughput.
         def branches = [:]
         for (int branchIndex = 1; branchIndex <= concurrency; branchIndex++) {
             def i = branchIndex
             branches["log-flood-${i}"] = {
                 node(agentLabel) {
                     bench.timed("log-flood-${i}") {
-                        // Rate-limited, not raw `yes` — a quick local check showed plain
-                        // `timeout N yes` produces multiple GB *per second*, which risks
-                        // filling the controller's actual disk or making the build log
-                        // unusable rather than just generating sustained volume. ~1MB
-                        // every 0.5s (~2MB/s) per branch is still far beyond anything a
-                        // normal step produces, sustained for the full duration, without
-                        // being reckless. `timeout` bounds the loop (it never exits on its
-                        // own) and always exits non-zero (124) when it kills the loop —
-                        // hence `|| true`.
-                        sh "timeout ${logFloodSeconds} sh -c \"while true; do head -c 1048576 /dev/zero | tr '\\0' 'x'; echo; sleep 0.5; done\" || true"
+                        // head -c <N>G reads exactly N GiB from /dev/zero (verified: 1G
+                        // produces exactly 1073741824 bytes); tr converts the null bytes
+                        // to a printable character since raw NUL bytes in a text log
+                        // stream can confuse log viewers/downstream tooling.
+                        sh "head -c ${logFloodSizeGb}G /dev/zero | tr '\\0' 'x'"
                     }
                     stash name: "metrics-log-flood-${i}", includes: 'bench-metrics.csv', allowEmpty: true
                 }
