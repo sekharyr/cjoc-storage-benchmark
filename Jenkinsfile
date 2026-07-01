@@ -16,7 +16,7 @@ properties([
                description: 'Informational label only — this job must already be scheduled onto the controller backed by this storage class'),
         string(name: 'CONCURRENCY', defaultValue: '1', description: 'Parallel build branches to fan out (maps to Layer 3 in the design memo)'),
         booleanParam(name: 'COLD_CACHE', defaultValue: true, description: 'Wipe workspace + Maven cache before building'),
-        string(name: 'DOCKERHUB_REPO', defaultValue: 'REPLACE_ME/cjoc-storage-benchmark', description: 'Docker Hub repo (namespace/name) to tag and push the built workload image to'),
+        string(name: 'DOCKERHUB_REPO', defaultValue: 'sekharyr/cjoc-storage-benchmark', description: 'Docker Hub repo (namespace/name) to tag and push the built workload image to'),
         booleanParam(name: 'TRIVY_HARD_FAIL', defaultValue: false, description: 'Fail the pipeline on Trivy-detected vulnerabilities instead of only reporting them'),
         string(name: 'TRIVY_SEVERITY', defaultValue: 'CRITICAL,HIGH', description: 'Comma-separated severity levels Trivy hard-fails on when TRIVY_HARD_FAIL is true')
     ]),

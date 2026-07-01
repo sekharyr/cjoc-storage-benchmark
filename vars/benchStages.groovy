@@ -16,7 +16,7 @@ def call(Map cfg) {
     def soakSeconds = cfg.soakDurationSeconds ?: 120
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
-    def dockerhubRepo = cfg.dockerhubRepo ?: 'REPLACE_ME/cjoc-storage-benchmark'
+    def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
     def trivyHardFail = cfg.trivyHardFail ?: false
     def trivySeverity = cfg.trivySeverity ?: 'CRITICAL,HIGH'
     // Pinned together since buildctl and the buildkitd sidecar must be compatible versions.

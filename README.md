@@ -76,9 +76,11 @@ results/                         run output lands here (gitignored contents)
    `withCredentials([usernamePassword(...)])` + `crane auth login` (not
    `withDockerRegistry`, since there's no `docker` CLI on the agent at all).
    Required on every controller that runs the pipeline unless a shared
-   CJOC-level credential provider is configured. Also set `DOCKERHUB_REPO`
-   away from its `REPLACE_ME/...` default before running a job — the pipeline
-   will fail loudly at the `crane push` step if you don't.
+   CJOC-level credential provider is configured. `DOCKERHUB_REPO` defaults to
+   `sekharyr/cjoc-storage-benchmark` — override it via the job parameter if
+   you're pushing to a different namespace/repo. Docker/OCI repository names
+   must be all-lowercase; the build fails fast at `buildctl build` (before
+   `crane` even runs) if the tag isn't.
 
 ## Running the matrix
 
