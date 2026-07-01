@@ -1,0 +1,12 @@
+# Per-run benchmark output (see README "Layout")
+results/*
+!results/.gitkeep
+
+# Pipeline checkout destination — cloned fresh from workloadRepo each run
+workload/*
+!workload/.gitkeep
+
+__pycache__/
+*.pyc
+
+.DS_Store

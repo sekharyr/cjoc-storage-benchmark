@@ -1,0 +1,22 @@
+# Spring profile overlay dropped into the workload app by scripts/benchStages
+# checkout stage. Enables the actuator health endpoint soak.sh polls by
+# default, and raises log verbosity so there's meaningful log-append volume
+# for Jenkins to stream back to the controller during the soak stage.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,loggers
+logging:
+  level:
+    root: DEBUG
+    org.springframework.web: DEBUG
+server:
+  port: 8080
+  # spring-petclinic-rest's own application.properties sets
+  # server.servlet.context-path=/petclinic/ — reset to root so soak.sh's
+  # default /actuator/health endpoint (and the Docker image's health check)
+  # don't 404 against a workload app that happens to use a non-root context
+  # path. Verified against a real container run.
+  servlet:
+    context-path: /

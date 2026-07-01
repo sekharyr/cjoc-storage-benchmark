@@ -1,0 +1,16 @@
+; Layer 1 baseline: large-block sequential read/write.
+; Approximates archiveArtifacts / stash payloads and Maven dependency downloads.
+[global]
+ioengine=libaio
+direct=1
+runtime=120
+time_based
+group_reporting
+directory=/data
+
+[seq-128k]
+rw=rw
+bs=128k
+iodepth=16
+numjobs=2
+size=4G

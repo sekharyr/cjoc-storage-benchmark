@@ -1,0 +1,18 @@
+; Layer 1 baseline: small-block mixed random read/write.
+; Approximates Jenkins' own access pattern (build-history/job-config metadata,
+; log appends) far better than a large sequential run does.
+[global]
+ioengine=libaio
+direct=1
+runtime=120
+time_based
+group_reporting
+directory=/data
+
+[randrw-4k]
+rw=randrw
+rwmixread=70
+bs=4k
+iodepth=32
+numjobs=4
+size=2G
