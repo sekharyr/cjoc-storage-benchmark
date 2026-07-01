@@ -79,6 +79,12 @@ def call(Map cfg) {
                     }
                     archiveArtifacts artifacts: 'workload/target/*.jar', fingerprint: true, allowEmptyArchive: true
                     stash name: "artifact-${i}", includes: 'workload/target/*.jar'
+                    // Every node(agentLabel) call is a fresh, separate pod with its own
+                    // empty workspace — bench.timed()'s bench-metrics.csv only exists in
+                    // *this* pod's filesystem. Stash it under a unique name so Publish
+                    // metrics (running in yet another fresh pod) can collect and merge
+                    // every stage's rows instead of finding an empty workspace.
+                    stash name: "metrics-build-${i}", includes: 'bench-metrics.csv', allowEmpty: true
                 }
             }
         }
@@ -136,6 +142,9 @@ def call(Map cfg) {
                 } catch (err) {
                     echo "[bench] Docker publish stage failed, continuing so metrics for this run still get published: ${err}"
                 }
+                // Outside the try/catch so this still runs (and captures whatever rows
+                // did get written) even if the stage above failed partway through.
+                stash name: 'metrics-docker-publish', includes: 'bench-metrics.csv', allowEmpty: true
             }
         }
     }
@@ -158,11 +167,42 @@ def call(Map cfg) {
                 sh "./bench-repo/scripts/soak.sh ${soakSeconds}"
                 sh 'kill $(cat app.pid) 2>/dev/null || true'
             }
+            stash name: 'metrics-soak', includes: 'bench-metrics.csv', allowEmpty: true
         }
     }
 
     stage('Publish metrics') {
         node(agentLabel) {
+            // Collect every stage's separately-stashed bench-metrics.csv (each written
+            // in its own pod, per the comment on the build-matrix stash above) into
+            // distinct subdirectories, then concatenate into one file: one header line
+            // (identical across all parts, from vars/bench.groovy's appendRow) plus
+            // every part's data rows.
+            for (int branchIndex = 1; branchIndex <= concurrency; branchIndex++) {
+                def i = branchIndex
+                dir("metrics-parts/build-${i}") {
+                    unstash "metrics-build-${i}"
+                }
+            }
+            dir('metrics-parts/docker-publish') {
+                unstash 'metrics-docker-publish'
+            }
+            dir('metrics-parts/soak') {
+                unstash 'metrics-soak'
+            }
+            sh '''
+                : > bench-metrics.csv
+                first=1
+                for f in metrics-parts/*/bench-metrics.csv; do
+                    [ -f "$f" ] || continue
+                    if [ "$first" = 1 ]; then
+                        cat "$f" > bench-metrics.csv
+                        first=0
+                    else
+                        tail -n +2 "$f" >> bench-metrics.csv
+                    fi
+                done
+            '''
             bench.publishMetrics(cfg.storageClass)
         }
     }
