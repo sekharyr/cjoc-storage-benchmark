@@ -63,9 +63,9 @@ results/                         run output lands here (gitignored contents)
    scoped to just the `Docker publish` stage (`inheritFrom` your existing
    `bench-agent` template) — nothing to configure by hand beyond one check:
    the `buildkitd` container needs `privileged: true`, and Pod Security
-   Admission set to `restricted` on the `cloudbees-agent` namespace (or an
+   Admission set to `restricted` on the `cloudbees-agents` namespace (or an
    OPA/Gatekeeper policy) will silently block that pod from scheduling.
-   Confirm before running a job: `kubectl get ns cloudbees-agent -o
+   Confirm before running a job: `kubectl get ns cloudbees-agents -o
    jsonpath='{.metadata.labels}'` — look for
    `pod-security.kubernetes.io/enforce: restricted`; if present, either relax
    it for this namespace or exempt this specific pod template.
