@@ -62,8 +62,8 @@ results/                         run output lands here (gitignored contents)
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
    `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_MB`,
-   `STORAGE_RESOURCE_ID`, and `INTEGRATION_TEST_REPEAT` for the rest of the
-   matrix.
+   `STORAGE_RESOURCE_ID`, `INTEGRATION_TEST_REPEAT`, and `ARTIFACT_COPY_COUNT`
+   for the rest of the matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
    sidecar container (`buildctl` talking to it over `localhost`, since
@@ -180,6 +180,20 @@ one(s) relevant to what you're checking).
   `integration-test-${i}-rep-${rep}` once repeat > 1; at the default
   (repeat=1) the label is unchanged from before, so existing CSVs still
   aggregate correctly.
+- `ARTIFACT_COPY_COUNT > 1` is a third, distinct source of real JENKINS_HOME
+  write pressure — genuine compressed binary content (the built jar, copied
+  N times) via `archiveArtifacts`, which won't compress further the way
+  repeated log text can. **This one is different from Log flood and
+  Integration test repeat in a way that matters**: those two don't
+  permanently grow `JENKINS_HOME` usage, but archived artifacts land in
+  `JENKINS_HOME/jobs/<job>/builds/<n>/archive/` and **accumulate forever**
+  across every build unless a retention policy (`buildDiscarder`) is
+  configured. Do the arithmetic — `CONCURRENCY × ARTIFACT_COPY_COUNT × jar
+  size` — against real available disk before pushing this parameter high,
+  especially if you're running ≥5 repeats per matrix cell as recommended
+  above. Timed as `archive-artifacts-${i}` (the controller-side write); the
+  local duplication step that creates the copies isn't separately timed,
+  since it's agent-local disk work, same category as unit-test/soak.
 - Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_MB` MB — do that
   arithmetic against the controller's actual available disk before pushing
   either value very high, since this is a fixed, deliberate volume rather

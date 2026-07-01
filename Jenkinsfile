@@ -21,7 +21,8 @@ properties([
         string(name: 'TRIVY_SEVERITY', defaultValue: 'CRITICAL,HIGH', description: 'Comma-separated severity levels Trivy hard-fails on when TRIVY_HARD_FAIL is true'),
         string(name: 'LOG_FLOOD_SIZE_MB', defaultValue: '50', description: 'MB of realistic log-shaped output each of the CONCURRENCY Log flood branches writes (e.g. CONCURRENCY=4 + this=50 writes 200MB total) — the one stage that deliberately generates real, concurrent JENKINS_HOME write pressure on the controller. Start small: 1GB/branch measured impractically slow through Jenkins own console-log capture path in a real run — calibrate up from this default rather than jumping straight to large values.'),
         string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'The AWS resource ID backing THIS controller\'s JENKINS_HOME PVC — vol-xxxx for EBS, fs-xxxx for EFS/FSx. Leave blank to skip Layer 4 CloudWatch collection. Requires the bench-agent pod to have AWS credentials (IRSA recommended) with cloudwatch:GetMetricStatistics.'),
-        string(name: 'INTEGRATION_TEST_REPEAT', defaultValue: '1', description: 'Re-run the real mvnw verify this many times per build branch — genuine Maven/JVM console output repeated, not synthetic flood text, as a second source of concurrent JENKINS_HOME log pressure alongside Log flood. Default 1 = no change from today\'s single run.')
+        string(name: 'INTEGRATION_TEST_REPEAT', defaultValue: '1', description: 'Re-run the real mvnw verify this many times per build branch — genuine Maven/JVM console output repeated, not synthetic flood text, as a second source of concurrent JENKINS_HOME log pressure alongside Log flood. Default 1 = no change from today\'s single run.'),
+        string(name: 'ARTIFACT_COPY_COUNT', defaultValue: '1', description: 'Archive this many copies of the same built jar per build branch (default 1 = just the real jar, unchanged). Each copy is a genuine controller-side write to JENKINS_HOME/jobs/<job>/builds/<n>/archive/ - real compressed binary content, a third distinct kind of write pressure alongside Log flood (text) and Integration test repeat (Maven output). WARNING: unlike those, archived artifacts ACCUMULATE FOREVER on JENKINS_HOME across builds unless a retention policy is configured - do the arithmetic (CONCURRENCY x this x jar size) before pushing this high.')
     ]),
     durabilityHint(env.BENCH_DURABILITY_HINT)
 ])
@@ -37,5 +38,6 @@ benchStages(
     trivySeverity: params.TRIVY_SEVERITY,
     logFloodSizeMb: params.LOG_FLOOD_SIZE_MB,
     storageResourceId: params.STORAGE_RESOURCE_ID,
-    integrationTestRepeat: params.INTEGRATION_TEST_REPEAT
+    integrationTestRepeat: params.INTEGRATION_TEST_REPEAT,
+    artifactCopyCount: params.ARTIFACT_COPY_COUNT
 )

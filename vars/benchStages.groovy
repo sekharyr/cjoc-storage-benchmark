@@ -23,6 +23,14 @@ def call(Map cfg) {
     // flood text — genuine Maven/JVM output repeated, as a second, complementary
     // way to generate concurrent JENKINS_HOME log pressure alongside Log flood.
     def integrationTestRepeat = (cfg.integrationTestRepeat ?: 1) as int
+    // Duplicates of the same jar, archived alongside it — a third, distinct kind
+    // of real JENKINS_HOME write pressure: genuine compressed binary content
+    // (won't compress further the way repeated log text can), landing in
+    // JENKINS_HOME/jobs/<job>/builds/<n>/archive/ on the controller, one real
+    // file per copy. Unlike Log flood/soak, these ACCUMULATE FOREVER on
+    // JENKINS_HOME across builds unless a build-retention policy is set — see
+    // the README caveat before pushing this or CONCURRENCY high.
+    def artifactCopyCount = (cfg.artifactCopyCount ?: 1) as int
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
@@ -98,8 +106,36 @@ def call(Map cfg) {
                             }
                         }
                     }
-                    archiveArtifacts artifacts: 'workload/target/*.jar', fingerprint: true, allowEmptyArchive: true
-                    stash name: "artifact-${i}", includes: 'workload/target/*.jar'
+                    // Makes artifactCopyCount-1 duplicate .jar files alongside the real one
+                    // (named *-copy-N.jar) — this part is agent-local disk work, same
+                    // category as unit-test/integration-test, not JENKINS_HOME-relevant on
+                    // its own. A no-op loop at the default (1), verified locally including
+                    // that `seq 2 1` correctly produces nothing.
+                    sh """
+                        cd workload/target
+                        jar_file=\$(ls *.jar 2>/dev/null | grep -v '\\.original\$' | head -1)
+                        if [ -n "\$jar_file" ]; then
+                            for n in \$(seq 2 ${artifactCopyCount}); do
+                                cp "\$jar_file" "\${jar_file%.jar}-copy-\${n}.jar"
+                            done
+                        fi
+                    """
+                    // This call is the actually JENKINS_HOME-relevant one: archiveArtifacts
+                    // is what copies files from the agent workspace up to the controller's
+                    // JENKINS_HOME/jobs/<job>/builds/<n>/archive/, one real file per copy.
+                    // Genuine compressed binary content — won't compress further the way
+                    // repeated log text can — landing there and ACCUMULATING FOREVER across
+                    // builds unless a retention policy is set (see README caveat). The glob
+                    // picks up every *-copy-N.jar automatically alongside the original.
+                    bench.timed("archive-artifacts-${i}") {
+                        archiveArtifacts artifacts: 'workload/target/*.jar', fingerprint: true, allowEmptyArchive: true
+                    }
+                    // Excludes *-copy-*.jar deliberately — Docker publish's Dockerfile does
+                    // COPY --from=build /workload/target/*.jar /app.jar, which errors if
+                    // that glob matches more than one file. The duplicates are an
+                    // archive-to-JENKINS_HOME concern only; Docker build/Deploy+soak should
+                    // only ever see the one real jar, unaffected by ARTIFACT_COPY_COUNT.
+                    stash name: "artifact-${i}", includes: 'workload/target/*.jar', excludes: 'workload/target/*-copy-*.jar'
                     // Every node(agentLabel) call is a fresh, separate pod with its own
                     // empty workspace — bench.timed()'s bench-metrics.csv only exists in
                     // *this* pod's filesystem. Stash it under a unique name so Publish
