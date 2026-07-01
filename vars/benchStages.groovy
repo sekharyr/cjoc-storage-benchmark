@@ -356,6 +356,8 @@ def call(Map cfg) {
                         """
                     }
                     archiveArtifacts artifacts: 'results/cloudwatch/*.json', allowEmptyArchive: true
+                    bench.summarizeCloudWatch('results/cloudwatch')
+                    archiveArtifacts artifacts: 'results/cloudwatch/cloudwatch-summary.csv', allowEmptyArchive: true
                 } catch (err) {
                     echo "[bench] CloudWatch collection failed, continuing: ${err}"
                 }

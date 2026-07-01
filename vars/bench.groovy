@@ -47,3 +47,78 @@ def publishMetrics(String storageClass) {
     sh "cp ${metricsFile} ${destDir}/${env.BUILD_TAG}.csv"
     echo "[bench] published metrics to ${destDir}/${env.BUILD_TAG}.csv"
 }
+
+// Turns collect-cloudwatch.sh's raw per-metric JSON into actual IOPS/MB-per-sec
+// numbers and writes dir/cloudwatch-summary.csv — same math as
+// scripts/summarize-cloudwatch.py, reimplemented in pure Groovy (writeFile/
+// readFile + groovy.json.JsonSlurper, no plugin beyond core pipeline steps)
+// specifically because python3 isn't installed on the maven:* agent image, so
+// the Python version can't run inline here. That script still exists for
+// manual, standalone re-analysis of downloaded JSON on a machine that does
+// have python3 — this is the automatic, in-pipeline equivalent.
+//
+// Uses a plain for-loop over the file list, not `.each{}`, for the same
+// reason vars/benchStages.groovy's Build matrix stage does: readFile (a real
+// pipeline step) runs inside this loop, and CPS checkpointing has bitten
+// range/closure iteration wrapping pipeline steps before. The `.findAll{}`/
+// `.collect{}` calls further down are safe as `.each{}`-style closures since
+// they only do pure in-memory arithmetic — no pipeline step calls inside them.
+def summarizeCloudWatch(String dir) {
+    def periodSeconds = 60
+    def bytesPerMb = 1000000
+    def fileList = sh(script: "ls ${dir}/*.json 2>/dev/null || true", returnStdout: true).trim()
+    if (!fileList) {
+        echo "[bench] no CloudWatch JSON found under ${dir}, skipping summary"
+        return
+    }
+    def jsonSlurper = new groovy.json.JsonSlurper()
+    def rows = []
+    def paths = fileList.split('\n')
+    for (int idx = 0; idx < paths.size(); idx++) {
+        def path = paths[idx]
+        def filename = path.tokenize('/').last()
+        def metricName = filename.replaceAll(/\.json$/, '').split('-', 2)[1]
+        def kind = (metricName.endsWith('Ops') || metricName.endsWith('Operations')) ? 'iops' :
+            metricName.endsWith('Bytes') ? 'throughput' : 'other'
+        def data = jsonSlurper.parseText(readFile(path))
+        def datapoints = data.Datapoints ?: []
+        if (datapoints.isEmpty()) {
+            continue
+        }
+        def avgRates, maxRates, unit
+        if (kind == 'iops') {
+            avgRates = datapoints.findAll { it.Sum != null }.collect { it.Sum / periodSeconds }
+            maxRates = avgRates
+            unit = 'ops/sec'
+        } else if (kind == 'throughput') {
+            avgRates = datapoints.findAll { it.Sum != null }.collect { it.Sum / periodSeconds / bytesPerMb }
+            maxRates = avgRates
+            unit = 'MB/sec'
+        } else {
+            // Percent/Utilization/Balance metrics are already a rate — and unlike
+            // iops/throughput, CloudWatch's own Maximum here is genuinely different
+            // from (and more useful than) the highest per-period Average, so track
+            // them as separate series rather than deriving "max" from "avg"'s data.
+            avgRates = datapoints.findAll { it.Average != null }.collect { it.Average }
+            maxRates = datapoints.findAll { it.Maximum != null }.collect { it.Maximum }
+            unit = datapoints[0].Unit ?: ''
+        }
+        if (!avgRates || !maxRates) {
+            continue
+        }
+        def avgVal = avgRates.sum() / avgRates.size()
+        def maxVal = maxRates.max()
+        rows << [metric: metricName, kind: kind, n: avgRates.size(), avg: avgVal, max: maxVal, unit: unit]
+    }
+    if (rows.isEmpty()) {
+        echo "[bench] no CloudWatch datapoints to summarize (check the time window / CloudWatch's 1-2 min ingestion delay)"
+        return
+    }
+    def csvLines = ['metric,kind,n,avg,max,unit']
+    for (int idx = 0; idx < rows.size(); idx++) {
+        def r = rows[idx]
+        csvLines << "${r.metric},${r.kind},${r.n},${String.format('%.2f', r.avg)},${String.format('%.2f', r.max)},${r.unit}"
+    }
+    writeFile file: "${dir}/cloudwatch-summary.csv", text: csvLines.join('\n') + '\n'
+    echo "[bench] wrote ${dir}/cloudwatch-summary.csv"
+}

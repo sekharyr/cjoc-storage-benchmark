@@ -138,32 +138,37 @@ Each run archives `bench-metrics.csv` and copies it to
 as the pipeline's last stage (`Collect CloudWatch metrics`) whenever
 `STORAGE_RESOURCE_ID` is set — using `currentBuild.startTimeInMillis` through
 "now" as the window, and whichever of `EBS_VOLUME_ID`/`EFS_FILESYSTEM_ID`/
-`FSX_FILESYSTEM_ID` matches the job's `STORAGE_CLASS`. Results land under
-`results/cloudwatch/*.json` and get archived as build artifacts. To pull
-metrics manually instead (e.g. for a window spanning multiple runs, or if
-`STORAGE_RESOURCE_ID` wasn't set for a given run):
+`FSX_FILESYSTEM_ID` matches the job's `STORAGE_CLASS`. Raw results land under
+`results/cloudwatch/*.json` — but `aws cloudwatch get-metric-statistics`
+returns per-period `Sum`/`Average`/`Maximum`, not a ready ops-per-second or
+MB-per-second figure, so the stage also calls `bench.summarizeCloudWatch()`
+(in `vars/bench.groovy`) to compute the actual numbers and write
+`results/cloudwatch/cloudwatch-summary.csv`. **This is a pure-Groovy
+reimplementation of `scripts/summarize-cloudwatch.py`'s math, not a call to
+that script** — `python3` isn't installed on the `maven:*` agent image, so
+the Python version can't run inline in the pipeline; the Groovy version uses
+only core pipeline steps (`sh`/`readFile`/`writeFile`) plus
+`groovy.json.JsonSlurper`, no extra install needed. `*Ops`/`*Operations`
+metrics get `Sum ÷ 60s` → IOPS; `*Bytes` metrics get `Sum ÷ 60s ÷
+1,000,000` → MB/sec (decimal MB, matching AWS's own published specs like
+gp3's 125 MB/s baseline); everything else (`PercentIOLimit`, `BurstBalance`,
+etc.) is already a rate and gets reported as-is from each datapoint's own
+`Average`/`Maximum`. Both the raw JSON and the summary CSV get archived as
+build artifacts.
+
+To pull and summarize metrics manually instead (e.g. for a window spanning
+multiple runs, or if `STORAGE_RESOURCE_ID` wasn't set for a given run) —
+this path needs `python3` and `aws` installed wherever you run it, unlike
+the in-pipeline version:
 
 ```
 EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   ./scripts/collect-cloudwatch.sh 2026-06-30T10:00:00Z 2026-06-30T10:10:00Z
+./scripts/summarize-cloudwatch.py results/cloudwatch
 ```
 
 (each of the three ID env vars is independently optional — set only the
 one(s) relevant to what you're checking).
-
-**Turn that raw JSON into actual IOPS/throughput numbers** — `aws
-cloudwatch get-metric-statistics` returns per-period `Sum`/`Average`/
-`Maximum`, not a ready ops-per-second or MB-per-second figure:
-
-```
-./scripts/summarize-cloudwatch.py results/cloudwatch
-```
-
-`*Ops`/`*Operations` metrics get `Sum ÷ 60s` → IOPS; `*Bytes` metrics get
-`Sum ÷ 60s ÷ 1,000,000` → MB/sec (decimal MB, matching AWS's own published
-specs like gp3's 125 MB/s baseline, so the numbers are directly comparable);
-everything else (`PercentIOLimit`, `BurstBalance`, etc.) is already a rate
-and gets reported as-is from each datapoint's own `Average`/`Maximum`.
 
 **Aggregate everything collected so far:**
 

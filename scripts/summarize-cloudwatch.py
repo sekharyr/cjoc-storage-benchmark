@@ -10,8 +10,12 @@ reported as-is from each datapoint's own Average/Maximum.
 
 Stdlib only -- no install step needed on a Jenkins agent or controller.
 
+Writes cloudwatch-summary.csv into the same directory as the input JSON
+(for archiving alongside it) as well as printing a markdown table to stdout.
+
 Usage: scripts/summarize-cloudwatch.py [results/cloudwatch]
 """
+import csv
 import glob
 import json
 import os
@@ -88,11 +92,13 @@ def main():
     header = ('metric', 'kind', 'n', 'avg', 'max', 'unit')
     print(' | '.join(header))
     print(' | '.join(['---'] * len(header)))
+    summaries = []
     for path in paths:
         summary = summarize_file(path)
         if summary is None:
             print(f"{os.path.basename(path)} | no datapoints (check the time window / CloudWatch's 1-2 min ingestion delay)")
             continue
+        summaries.append(summary)
         print(' | '.join([
             summary['metric'],
             summary['kind'],
@@ -101,6 +107,22 @@ def main():
             f"{summary['max']:.2f}",
             str(summary['unit']),
         ]))
+
+    if summaries:
+        csv_path = os.path.join(pattern, 'cloudwatch-summary.csv')
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=header)
+            writer.writeheader()
+            for summary in summaries:
+                writer.writerow({
+                    'metric': summary['metric'],
+                    'kind': summary['kind'],
+                    'n': summary['n'],
+                    'avg': f"{summary['avg']:.2f}",
+                    'max': f"{summary['max']:.2f}",
+                    'unit': summary['unit'],
+                })
+        print(f'\nWrote {csv_path}')
 
 
 if __name__ == '__main__':
