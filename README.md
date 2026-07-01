@@ -14,6 +14,17 @@ step for why that's labeled honestly rather than claimed as real integration
 tests), then builds/scans/pushes a container image — approximating a real
 service pipeline rather than a bare synthetic build.
 
+**Important:** the build/test/Docker/soak work above all runs on the
+`bench-agent` pod's own local disk — none of it touches `JENKINS_HOME` at
+all, since agent workspace storage is architecturally separate from whatever
+StorageClass backs a given controller's `JENKINS_HOME` PVC. If you're seeing
+near-identical numbers across EBS/EFS/FSx, this is why — most of what's
+timed here isn't exercising the thing being compared. The **`Log flood`**
+stage exists specifically to address this: it deliberately generates real,
+concurrent, sustained log volume, which *is* one of the few things Jenkins
+genuinely writes to `JENKINS_HOME` incrementally (build console logs) on the
+controller itself. See "Before you trust a number" below.
+
 ## Layout
 
 ```
@@ -50,8 +61,8 @@ results/                         run output lands here (gitignored contents)
    `Jenkinsfile.max-survivability` (Jenkins "Pipeline script from SCM" lets
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
-   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, and `TRIVY_SEVERITY` for the rest of
-   the matrix.
+   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, and
+   `LOG_FLOOD_SECONDS` for the rest of the matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
    sidecar container (`buildctl` talking to it over `localhost`, since
@@ -124,5 +135,21 @@ EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   `unit-test-${i}` plus a JaCoCo coverage-gate check — don't read a big gap
   between those two labels' timings as "integration tests are expensive,"
   since there aren't real integration tests here (see the Layout/intro note).
+- `unit-test-${i}`, `integration-test-${i}`, `docker-build`, `trivy-scan`,
+  `docker-push`, and `soak` all run on the `bench-agent` pod's local disk, not
+  `JENKINS_HOME` — expect these to look similar across EBS/EFS/FSx regardless
+  of the controller's actual storage class, since none of them exercise it.
+  `log-flood-${i}` is the label that actually should differ across storage
+  classes, since it's the one deliberately generating concurrent write
+  pressure on the controller's own disk. If `log-flood-${i}` *also* looks
+  identical across all three, check the Layer 1 `fio` baseline and Layer 4
+  CloudWatch data for the same time window before concluding the storage
+  classes perform the same — it could mean the PVCs/StorageClasses aren't as
+  differentiated as expected, not that this pipeline failed to measure them.
+- `LOG_FLOOD_SECONDS` is tuned to ~2MB/s per branch (not raw `yes`, which
+  measured multiple GB/s locally) specifically to avoid filling the
+  controller's actual disk — raising `CONCURRENCY` and `LOG_FLOOD_SECONDS`
+  both scale total log volume linearly; do the arithmetic against the
+  controller's actual available disk before pushing either one very high.
 
 See the design memo for the full rationale behind each of these.

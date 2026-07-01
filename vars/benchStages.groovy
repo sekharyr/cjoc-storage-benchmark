@@ -14,6 +14,7 @@ def call(Map cfg) {
     def agentLabel = cfg.agentLabel ?: 'bench-agent'
     def concurrency = (cfg.concurrency ?: '1') as int
     def soakSeconds = cfg.soakDurationSeconds ?: 120
+    def logFloodSeconds = (cfg.logFloodSeconds ?: 30) as int
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
@@ -85,6 +86,40 @@ def call(Map cfg) {
                     // metrics (running in yet another fresh pod) can collect and merge
                     // every stage's rows instead of finding an empty workspace.
                     stash name: "metrics-build-${i}", includes: 'bench-metrics.csv', allowEmpty: true
+                }
+            }
+        }
+        parallel branches
+    }
+
+    stage('Log flood') {
+        // The build/test/soak stages all run entirely on the agent pod's own local
+        // disk — none of them actually touch JENKINS_HOME (see the README's "Before
+        // you trust a number" note on this). Build console logs are one of the few
+        // things Jenkins genuinely writes to JENKINS_HOME incrementally as steps run,
+        // on the *controller*. Running CONCURRENCY branches that each flood their own
+        // stdout for logFloodSeconds means the controller receives that many
+        // simultaneous high-volume log streams at once — real, sustained, concurrent
+        // write pressure on the storage class actually under test, independent of
+        // Maven/Docker/HTTP load.
+        def branches = [:]
+        for (int branchIndex = 1; branchIndex <= concurrency; branchIndex++) {
+            def i = branchIndex
+            branches["log-flood-${i}"] = {
+                node(agentLabel) {
+                    bench.timed("log-flood-${i}") {
+                        // Rate-limited, not raw `yes` — a quick local check showed plain
+                        // `timeout N yes` produces multiple GB *per second*, which risks
+                        // filling the controller's actual disk or making the build log
+                        // unusable rather than just generating sustained volume. ~1MB
+                        // every 0.5s (~2MB/s) per branch is still far beyond anything a
+                        // normal step produces, sustained for the full duration, without
+                        // being reckless. `timeout` bounds the loop (it never exits on its
+                        // own) and always exits non-zero (124) when it kills the loop —
+                        // hence `|| true`.
+                        sh "timeout ${logFloodSeconds} sh -c \"while true; do head -c 1048576 /dev/zero | tr '\\0' 'x'; echo; sleep 0.5; done\" || true"
+                    }
+                    stash name: "metrics-log-flood-${i}", includes: 'bench-metrics.csv', allowEmpty: true
                 }
             }
         }
@@ -182,6 +217,9 @@ def call(Map cfg) {
                 def i = branchIndex
                 dir("metrics-parts/build-${i}") {
                     unstash "metrics-build-${i}"
+                }
+                dir("metrics-parts/log-flood-${i}") {
+                    unstash "metrics-log-flood-${i}"
                 }
             }
             dir('metrics-parts/docker-publish') {
