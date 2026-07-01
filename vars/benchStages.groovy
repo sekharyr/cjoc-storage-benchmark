@@ -42,7 +42,14 @@ def call(Map cfg) {
 
     stage('Build matrix') {
         def branches = [:]
-        (1..concurrency).each { i ->
+        // Plain for-loop, not (1..concurrency).each{} — Groovy's IntRange isn't
+        // serializable in a way Jenkins' CPS engine can checkpoint mid-pipeline,
+        // and throws java.io.NotSerializableException: groovy.lang.IntRange the
+        // first time it tries. `def i = branchIndex` inside the loop snapshots
+        // the value per iteration so each closure captures its own i rather than
+        // all closures sharing a reference to the same mutable loop variable.
+        for (int branchIndex = 1; branchIndex <= concurrency; branchIndex++) {
+            def i = branchIndex
             branches["build-${i}"] = {
                 node(agentLabel) {
                     unstash 'src'
