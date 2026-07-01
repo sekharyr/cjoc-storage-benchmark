@@ -38,6 +38,7 @@ resources/application-iobench.yml Spring profile dropped into the workload app
 scripts/setup-workload.sh        clones the reference Spring Boot apps
 scripts/soak.sh                  post-deploy read/write load generator
 scripts/collect-cloudwatch.sh    Layer 4 storage-metric snapshot per run
+scripts/summarize-cloudwatch.py  turns that raw JSON into actual IOPS/MB-per-sec numbers
 scripts/aggregate-results.py     medians/p95 across all collected CSVs
 results/                         run output lands here (gitignored contents)
 ```
@@ -149,6 +150,20 @@ EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
 
 (each of the three ID env vars is independently optional — set only the
 one(s) relevant to what you're checking).
+
+**Turn that raw JSON into actual IOPS/throughput numbers** — `aws
+cloudwatch get-metric-statistics` returns per-period `Sum`/`Average`/
+`Maximum`, not a ready ops-per-second or MB-per-second figure:
+
+```
+./scripts/summarize-cloudwatch.py results/cloudwatch
+```
+
+`*Ops`/`*Operations` metrics get `Sum ÷ 60s` → IOPS; `*Bytes` metrics get
+`Sum ÷ 60s ÷ 1,000,000` → MB/sec (decimal MB, matching AWS's own published
+specs like gp3's 125 MB/s baseline, so the numbers are directly comparable);
+everything else (`PercentIOLimit`, `BurstBalance`, etc.) is already a rate
+and gets reported as-is from each datapoint's own `Average`/`Maximum`.
 
 **Aggregate everything collected so far:**
 
