@@ -10,7 +10,7 @@ set -euo pipefail
 
 SIZE="${1:-20Gi}"
 OUTDIR="${2:-results/fio-baseline}"
-STORAGE_CLASSES=(ebs-gp3 efs-elastic fsx-openzfs)
+STORAGE_CLASSES=(ebs-gp3-sc efs-sc openzfs-sc)
 
 mkdir -p "$OUTDIR"
 

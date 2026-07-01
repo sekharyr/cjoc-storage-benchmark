@@ -8,9 +8,11 @@ matrix, same risk list. This repo implements Layers 1–4.
 Workload app: [spring-petclinic-rest](https://github.com/spring-petclinic/spring-petclinic-rest)
 (Maven, REST API, Postgres/MySQL/H2/HSQLDB profiles) by default, overridable via
 the `workloadRepo`/`workloadBranch` keys `benchStages.groovy` accepts. Each
-pipeline run builds it, unit-tests it, runs a real Testcontainers-backed
-integration test against it, then builds/scans/pushes a container image —
-approximating a real service pipeline rather than a bare synthetic build.
+pipeline run unit-tests it, runs its Maven `verify` phase (JaCoCo coverage
+gate — see the comment in `vars/benchStages.groovy`'s `integration-test-${i}`
+step for why that's labeled honestly rather than claimed as real integration
+tests), then builds/scans/pushes a container image — approximating a real
+service pipeline rather than a bare synthetic build.
 
 ## Layout
 
@@ -22,9 +24,7 @@ vars/benchStages.groovy          shared stage logic both Jenkinsfiles call
 Dockerfile                       multi-stage image build for the workload app, copied into workload/ at Checkout
 fio/                             Layer 1 synthetic baseline (fio jobs + kubestr runner)
 resources/application-iobench.yml Spring profile dropped into the workload app
-resources/BenchPostgresIT.java   injected Testcontainers integration test, copied into workload/ at Checkout
 scripts/setup-workload.sh        clones the reference Spring Boot apps
-scripts/inject-testcontainers-deps.py  adds Testcontainers test deps to the workload's pom.xml
 scripts/soak.sh                  post-deploy read/write load generator
 scripts/collect-cloudwatch.sh    Layer 4 storage-metric snapshot per run
 scripts/aggregate-results.py     medians/p95 across all collected CSVs
@@ -33,12 +33,10 @@ results/                         run output lands here (gitignored contents)
 
 ## Setup
 
-1. **Storage classes.** Assumed already provisioned in-cluster (managed
-   outside this repo) — `fio/run-kubestr.sh` and the Jenkinsfiles'
-   `STORAGE_CLASS` parameter both hardcode the names `ebs-gp3`, `efs-elastic`,
-   `fsx-openzfs`. Confirm those names match what's actually applied
-   (`kubectl get sc`) before running anything, or update those two spots to
-   match your naming.
+1. **Storage classes.** Provisioned in-cluster outside this repo, named
+   `ebs-gp3-sc`, `efs-sc`, `openzfs-sc` — `fio/run-kubestr.sh` and the
+   Jenkinsfiles' `STORAGE_CLASS` parameter both hardcode these names. Reverify
+   with `kubectl get sc` if the cluster's naming ever changes.
 2. **Dedicated node group.** Put the three controllers and the `bench-agent`
    pool on tainted nodes nothing else can schedule onto — noisy neighbors on
    shared nodes will otherwise show up as a storage-class difference that
@@ -54,21 +52,33 @@ results/                         run output lands here (gitignored contents)
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
    `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, and `TRIVY_SEVERITY` for the rest of
    the matrix.
-5. **Docker daemon access.** `bench-agent` nodes now build and scan container
-   images and run a Testcontainers-based integration test, all of which need a
-   Docker daemon — bind-mount `/var/run/docker.sock` into the bench-agent
-   pod/node. One socket covers `docker build`/`docker push`, the Trivy
-   container, and the Testcontainers-launched Postgres container; no separate
-   DinD sidecar is required.
+5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
+   anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
+   sidecar container (`buildctl` talking to it over `localhost`, since
+   sidecars share a pod's network namespace), scans the resulting OCI tarball
+   directly with `trivy`, and pushes with `crane` — chosen specifically
+   because `bench-agent` nodes may be containerd-only (no `/var/run/docker.sock`
+   to bind-mount at all, post-dockershim-removal). `vars/benchStages.groovy`
+   declares this sidecar inline via the Kubernetes plugin's `podTemplate` step,
+   scoped to just the `Docker publish` stage (`inheritFrom` your existing
+   `bench-agent` template) — nothing to configure by hand beyond one check:
+   the `buildkitd` container needs `privileged: true`, and Pod Security
+   Admission set to `restricted` on the `cloudbees-agent` namespace (or an
+   OPA/Gatekeeper policy) will silently block that pod from scheduling.
+   Confirm before running a job: `kubectl get ns cloudbees-agent -o
+   jsonpath='{.metadata.labels}'` — look for
+   `pod-security.kubernetes.io/enforce: restricted`; if present, either relax
+   it for this namespace or exempt this specific pod template.
 6. **Docker Hub credentials.** Create a Jenkins **Username with password**
    credential with ID `dockerhub-creds` — username is your Docker Hub
    namespace, password is a Docker Hub access token (Account Settings →
-   Security → New Access Token), **not** your account password. Required on
-   every controller that runs the pipeline, since `withDockerRegistry(credentialsId: 'dockerhub-creds')`
-   resolves the credential from the running controller's own store unless a
-   shared CJOC-level credential provider is configured. Also set `DOCKERHUB_REPO`
+   Security → New Access Token), **not** your account password. Consumed via
+   `withCredentials([usernamePassword(...)])` + `crane auth login` (not
+   `withDockerRegistry`, since there's no `docker` CLI on the agent at all).
+   Required on every controller that runs the pipeline unless a shared
+   CJOC-level credential provider is configured. Also set `DOCKERHUB_REPO`
    away from its `REPLACE_ME/...` default before running a job — the pipeline
-   will fail loudly at the `docker push` step if you don't.
+   will fail loudly at the `crane push` step if you don't.
 
 ## Running the matrix
 
@@ -104,16 +114,13 @@ EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   each of these changes the numbers by multiples on its own.
 - Report median and p95 across ≥5 runs per matrix cell, not a single run.
 - Disclose cold vs warm cache state; it can dwarf the storage-class effect.
-- Docker build/Trivy console output adds to the per-run log volume Jenkins
+- BuildKit build/Trivy console output adds to the per-run log volume Jenkins
   streams back to the controller (same mechanism already noted for
   `soak.sh`'s output) — runs from before/after this change to the pipeline
   aren't directly log-I/O comparable.
-- At higher `CONCURRENCY` values, each branch now also starts its own
-  Testcontainers Postgres container for `integration-test-${i}` — confirm the
-  bench-agent node group has enough local-disk/CPU headroom for `CONCURRENCY`
-  simultaneous containers, not just `CONCURRENCY` simultaneous Maven builds.
-  This is agent-node-local disk, not the `JENKINS_HOME` PVC under test, but it
-  is a new source of noisy-neighbor variance in the same node the existing
-  dedicated-node-group setup step already exists to protect.
+- `integration-test-${i}`'s `mvn verify` mostly re-runs the same tests as
+  `unit-test-${i}` plus a JaCoCo coverage-gate check — don't read a big gap
+  between those two labels' timings as "integration tests are expensive,"
+  since there aren't real integration tests here (see the Layout/intro note).
 
 See the design memo for the full rationale behind each of these.

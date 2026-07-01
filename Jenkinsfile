@@ -12,7 +12,7 @@ env.BENCH_DURABILITY_HINT = 'PERFORMANCE_OPTIMIZED'
 
 properties([
     parameters([
-        choice(name: 'STORAGE_CLASS', choices: ['ebs-gp3', 'efs-elastic', 'fsx-openzfs'],
+        choice(name: 'STORAGE_CLASS', choices: ['ebs-gp3-sc', 'efs-sc', 'openzfs-sc'],
                description: 'Informational label only — this job must already be scheduled onto the controller backed by this storage class'),
         string(name: 'CONCURRENCY', defaultValue: '1', description: 'Parallel build branches to fan out (maps to Layer 3 in the design memo)'),
         booleanParam(name: 'COLD_CACHE', defaultValue: true, description: 'Wipe workspace + Maven cache before building'),

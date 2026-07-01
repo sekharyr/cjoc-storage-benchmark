@@ -16,9 +16,6 @@ if [ ! -d "${WORKLOAD_DIR}/spring-petclinic-microservices" ]; then
 fi
 
 cp resources/application-iobench.yml "${WORKLOAD_DIR}/spring-petclinic-rest/src/main/resources/application-iobench.yml"
-python3 scripts/inject-testcontainers-deps.py "${WORKLOAD_DIR}/spring-petclinic-rest/pom.xml"
-mkdir -p "${WORKLOAD_DIR}/spring-petclinic-rest/src/test/java/org/springframework/samples/petclinic"
-cp resources/BenchPostgresIT.java "${WORKLOAD_DIR}/spring-petclinic-rest/src/test/java/org/springframework/samples/petclinic/BenchPostgresIT.java"
 cp Dockerfile "${WORKLOAD_DIR}/spring-petclinic-rest/Dockerfile"
 
 echo "Workload apps ready under ${WORKLOAD_DIR}/"
