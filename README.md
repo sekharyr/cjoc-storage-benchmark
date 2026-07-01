@@ -61,7 +61,7 @@ results/                         run output lands here (gitignored contents)
    `Jenkinsfile.max-survivability` (Jenkins "Pipeline script from SCM" lets
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
-   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_GB`,
+   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_MB`,
    and `STORAGE_RESOURCE_ID` for the rest of the matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
@@ -170,11 +170,21 @@ one(s) relevant to what you're checking).
   CloudWatch data for the same time window before concluding the storage
   classes perform the same — it could mean the PVCs/StorageClasses aren't as
   differentiated as expected, not that this pipeline failed to measure them.
-- Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_GB` GB (e.g.
-  `CONCURRENCY=4`, `LOG_FLOOD_SIZE_GB=1` writes 4GB total, 1GB per branch,
-  concurrently) — do that arithmetic against the controller's actual
-  available disk before pushing either value very high, since this is a
-  fixed, deliberate volume rather than a rate-limited/duration-bound one.
+- Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_MB` MB — do that
+  arithmetic against the controller's actual available disk before pushing
+  either value very high, since this is a fixed, deliberate volume rather
+  than a rate-limited/duration-bound one. **Start small and calibrate up**:
+  1GB/branch measured impractically slow in a real run — the bottleneck
+  isn't the write itself (verified locally: instant) but Jenkins' own
+  console-log capture path (buffered on the agent, streamed to the
+  controller, appended to the build log, plus however slowly a browser
+  renders a rapidly-growing multi-hundred-MB page if you're watching it
+  live). The default (50MB/branch) is a safer starting point; increase
+  gradually and watch wall-clock time before jumping to GB-scale values.
+  Each line is a realistic, log-shaped string (timestamp/level/context/kv
+  pairs), not a wall of repeated characters — genuine log text has varied
+  structure and doesn't compress the way one repeated byte does, so this is
+  a closer proxy for real build-log write patterns.
 - CloudWatch has its own 1-2 minute ingestion delay — the `Collect CloudWatch
   metrics` stage queries up through "now," so the last minute or so of that
   window can come back sparse or empty even though the run genuinely covered

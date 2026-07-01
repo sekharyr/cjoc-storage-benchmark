@@ -14,7 +14,11 @@ def call(Map cfg) {
     def agentLabel = cfg.agentLabel ?: 'bench-agent'
     def concurrency = (cfg.concurrency ?: '1') as int
     def soakSeconds = cfg.soakDurationSeconds ?: 120
-    def logFloodSizeGb = (cfg.logFloodSizeGb ?: 1) as int
+    // MB, not GB — 1GB per branch through Jenkins' actual console-log capture path
+    // (buffer on the agent, stream to the controller, append to the build log, plus
+    // whatever's rendering it live) proved impractically slow in a real run; this is
+    // a much safer starting point to calibrate up from. See the README caveat.
+    def logFloodSizeMb = (cfg.logFloodSizeMb ?: 50) as int
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
@@ -99,11 +103,11 @@ def call(Map cfg) {
         // you trust a number" note on this). Build console logs are one of the few
         // things Jenkins genuinely writes to JENKINS_HOME incrementally as steps run,
         // on the *controller*. Running CONCURRENCY branches that each write a fixed
-        // logFloodSizeGb of console output means the controller receives that many
+        // logFloodSizeMb of console output means the controller receives that many
         // simultaneous large log streams at once — real, concurrent write pressure on
         // the storage class actually under test, independent of Maven/Docker/HTTP
-        // load. A fixed total size (CONCURRENCY x logFloodSizeGb) rather than a
-        // duration is deliberate — "how long to write N GB" is a more comparable,
+        // load. A fixed total size (CONCURRENCY x logFloodSizeMb) rather than a
+        // duration is deliberate — "how long to write N MB" is a more comparable,
         // reproducible metric across storage classes than "however much fits in N
         // seconds," which conflates the answer with the a-priori-unknown throughput.
         def branches = [:]
@@ -112,11 +116,17 @@ def call(Map cfg) {
             branches["log-flood-${i}"] = {
                 node(agentLabel) {
                     bench.timed("log-flood-${i}") {
-                        // head -c <N>G reads exactly N GiB from /dev/zero (verified: 1G
-                        // produces exactly 1073741824 bytes); tr converts the null bytes
-                        // to a printable character since raw NUL bytes in a text log
-                        // stream can confuse log viewers/downstream tooling.
-                        sh "head -c ${logFloodSizeGb}G /dev/zero | tr '\\0' 'x'"
+                        // A realistic, log-shaped line (timestamp/level/context/kv pairs)
+                        // repeated via `yes`, capped at exactly N MiB by `head -c <N>M` —
+                        // verified locally to produce exactly the requested byte count.
+                        // Not a wall of repeated 'x' characters: real log text has varied
+                        // structure and doesn't compress the way one repeated byte does,
+                        // so this is a closer proxy for genuine build-log write patterns.
+                        sh """
+                            ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                            line="\$ts INFO [log-flood-${i}] processing build step status=OK duration_ms=42 items_processed=12345 queue_depth=7"
+                            yes "\$line" | head -c ${logFloodSizeMb}M
+                        """
                     }
                     stash name: "metrics-log-flood-${i}", includes: 'bench-metrics.csv', allowEmpty: true
                 }

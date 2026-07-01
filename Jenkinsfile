@@ -19,7 +19,7 @@ properties([
         string(name: 'DOCKERHUB_REPO', defaultValue: 'sekharyr/cjoc-storage-benchmark', description: 'Docker Hub repo (namespace/name) to tag and push the built workload image to'),
         booleanParam(name: 'TRIVY_HARD_FAIL', defaultValue: false, description: 'Fail the pipeline on Trivy-detected vulnerabilities instead of only reporting them'),
         string(name: 'TRIVY_SEVERITY', defaultValue: 'CRITICAL,HIGH', description: 'Comma-separated severity levels Trivy hard-fails on when TRIVY_HARD_FAIL is true'),
-        string(name: 'LOG_FLOOD_SIZE_GB', defaultValue: '1', description: 'GB of console output each of the CONCURRENCY Log flood branches writes (e.g. CONCURRENCY=4 + this=1 writes 4GB total) — the one stage that deliberately generates real, concurrent JENKINS_HOME write pressure on the controller, since build/test/soak all run on agent-local disk'),
+        string(name: 'LOG_FLOOD_SIZE_MB', defaultValue: '50', description: 'MB of realistic log-shaped output each of the CONCURRENCY Log flood branches writes (e.g. CONCURRENCY=4 + this=50 writes 200MB total) — the one stage that deliberately generates real, concurrent JENKINS_HOME write pressure on the controller. Start small: 1GB/branch measured impractically slow through Jenkins own console-log capture path in a real run — calibrate up from this default rather than jumping straight to large values.'),
         string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'The AWS resource ID backing THIS controller\'s JENKINS_HOME PVC — vol-xxxx for EBS, fs-xxxx for EFS/FSx. Leave blank to skip Layer 4 CloudWatch collection. Requires the bench-agent pod to have AWS credentials (IRSA recommended) with cloudwatch:GetMetricStatistics.')
     ]),
     durabilityHint(env.BENCH_DURABILITY_HINT)
@@ -34,6 +34,6 @@ benchStages(
     dockerhubRepo: params.DOCKERHUB_REPO,
     trivyHardFail: params.TRIVY_HARD_FAIL,
     trivySeverity: params.TRIVY_SEVERITY,
-    logFloodSizeGb: params.LOG_FLOOD_SIZE_GB,
+    logFloodSizeMb: params.LOG_FLOOD_SIZE_MB,
     storageResourceId: params.STORAGE_RESOURCE_ID
 )
