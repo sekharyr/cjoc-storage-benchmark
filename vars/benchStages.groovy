@@ -20,6 +20,7 @@ def call(Map cfg) {
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
     def trivyHardFail = cfg.trivyHardFail ?: false
     def trivySeverity = cfg.trivySeverity ?: 'CRITICAL,HIGH'
+    def storageResourceId = cfg.storageResourceId ?: ''
     // Pinned together since buildctl and the buildkitd sidecar must be compatible versions.
     def buildkitVersion = 'v0.20.0'
     def craneVersion = 'v0.20.2'
@@ -240,6 +241,47 @@ def call(Map cfg) {
                 done
             '''
             bench.publishMetrics(cfg.storageClass)
+        }
+    }
+
+    stage('Collect CloudWatch metrics') {
+        node(agentLabel) {
+            if (!storageResourceId) {
+                echo "[bench] storageResourceId not set, skipping CloudWatch collection"
+            } else {
+                unstash 'src'   // brings back bench-repo/scripts/collect-cloudwatch.sh
+                def storageClassLower = (cfg.storageClass ?: '').toLowerCase()
+                def idEnvVar = storageClassLower.contains('efs') ? 'EFS_FILESYSTEM_ID' :
+                    (storageClassLower.contains('fsx') || storageClassLower.contains('openzfs')) ? 'FSX_FILESYSTEM_ID' :
+                    'EBS_VOLUME_ID'
+                // currentBuild.startTimeInMillis .. now covers the whole run, not just
+                // this stage — CloudWatch's own 1-2 minute ingestion delay means the
+                // last minute or so of that window may come back sparse/incomplete.
+                def startEpochSeconds = (currentBuild.startTimeInMillis / 1000) as long
+                def endEpochSeconds = (System.currentTimeMillis() / 1000) as long
+                try {
+                    withEnv(["${idEnvVar}=${storageResourceId}"]) {
+                        sh """
+                            mkdir -p tools
+                            curl -sL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o tools/awscliv2.zip
+                            # unzip isn't on the maven:* image, but it's JDK-based — jar xf
+                            # extracts any zip-format archive since JAR files are zip under
+                            # the hood. jar doesn't preserve the executable bit, hence chmod.
+                            jar xf tools/awscliv2.zip
+                            mv aws tools/aws-src
+                            chmod +x tools/aws-src/install tools/aws-src/dist/aws tools/aws-src/dist/aws_completer
+                            tools/aws-src/install -i \$(pwd)/tools/aws-cli -b \$(pwd)/tools/aws-bin
+                            start=\$(date -u -d @${startEpochSeconds} +%Y-%m-%dT%H:%M:%SZ)
+                            end=\$(date -u -d @${endEpochSeconds} +%Y-%m-%dT%H:%M:%SZ)
+                            echo "[bench] collecting CloudWatch metrics for \$start .. \$end"
+                            PATH="\$(pwd)/tools/aws-bin:\$PATH" ./bench-repo/scripts/collect-cloudwatch.sh "\$start" "\$end" results/cloudwatch
+                        """
+                    }
+                    archiveArtifacts artifacts: 'results/cloudwatch/*.json', allowEmptyArchive: true
+                } catch (err) {
+                    echo "[bench] CloudWatch collection failed, continuing: ${err}"
+                }
+            }
         }
     }
 }

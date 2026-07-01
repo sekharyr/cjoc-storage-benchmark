@@ -61,8 +61,8 @@ results/                         run output lands here (gitignored contents)
    `Jenkinsfile.max-survivability` (Jenkins "Pipeline script from SCM" lets
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
-   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, and
-   `LOG_FLOOD_SIZE_GB` for the rest of the matrix.
+   `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_GB`,
+   and `STORAGE_RESOURCE_ID` for the rest of the matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
    sidecar container (`buildctl` talking to it over `localhost`, since
@@ -92,6 +92,20 @@ results/                         run output lands here (gitignored contents)
    you're pushing to a different namespace/repo. Docker/OCI repository names
    must be all-lowercase; the build fails fast at `buildctl build` (before
    `crane` even runs) if the tag isn't.
+7. **CloudWatch access (optional, for automatic Layer 4 collection).** Set
+   `STORAGE_RESOURCE_ID` to the AWS resource ID backing *this specific*
+   controller's `JENKINS_HOME` PVC — `vol-xxxx` for the EBS controller,
+   `fs-xxxx` for the EFS/FSx ones (find it via
+   `kubectl get pv $(kubectl get pvc jenkins-home -n <controller-ns> -o
+   jsonpath='{.spec.volumeName}') -o yaml`, look for `volumeHandle`). Leave it
+   blank to skip this stage entirely — everything else in the pipeline still
+   runs and publishes metrics normally. If set, the `bench-agent` pod needs
+   AWS credentials with `cloudwatch:GetMetricStatistics` — **IRSA** (an IAM
+   role annotated on the pod's Kubernetes ServiceAccount) is the recommended,
+   credential-free way to provide this on EKS; injecting static access keys
+   via a Jenkins credential is the fallback if IRSA isn't set up. A missing
+   `STORAGE_RESOURCE_ID` or failed AWS auth only skips this one stage — it
+   doesn't fail the rest of the run or block metrics already published.
 
 ## Running the matrix
 
@@ -106,12 +120,22 @@ results/                         run output lands here (gitignored contents)
 Each run archives `bench-metrics.csv` and copies it to
 `results/<storage_class>/<BUILD_TAG>.csv`.
 
-**Layer 4 — pull the storage metrics for the same window each run covered:**
+**Layer 4 — storage metrics for each run's time window.** Runs automatically
+as the pipeline's last stage (`Collect CloudWatch metrics`) whenever
+`STORAGE_RESOURCE_ID` is set — using `currentBuild.startTimeInMillis` through
+"now" as the window, and whichever of `EBS_VOLUME_ID`/`EFS_FILESYSTEM_ID`/
+`FSX_FILESYSTEM_ID` matches the job's `STORAGE_CLASS`. Results land under
+`results/cloudwatch/*.json` and get archived as build artifacts. To pull
+metrics manually instead (e.g. for a window spanning multiple runs, or if
+`STORAGE_RESOURCE_ID` wasn't set for a given run):
 
 ```
 EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   ./scripts/collect-cloudwatch.sh 2026-06-30T10:00:00Z 2026-06-30T10:10:00Z
 ```
+
+(each of the three ID env vars is independently optional — set only the
+one(s) relevant to what you're checking).
 
 **Aggregate everything collected so far:**
 
@@ -151,5 +175,10 @@ EBS_VOLUME_ID=vol-xxxx EFS_FILESYSTEM_ID=fs-xxxx FSX_FILESYSTEM_ID=fs-yyyy \
   concurrently) — do that arithmetic against the controller's actual
   available disk before pushing either value very high, since this is a
   fixed, deliberate volume rather than a rate-limited/duration-bound one.
+- CloudWatch has its own 1-2 minute ingestion delay — the `Collect CloudWatch
+  metrics` stage queries up through "now," so the last minute or so of that
+  window can come back sparse or empty even though the run genuinely covered
+  it. Don't read a dip at the very end of a CloudWatch chart as a real
+  storage-class effect.
 
 See the design memo for the full rationale behind each of these.
