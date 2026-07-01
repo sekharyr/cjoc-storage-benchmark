@@ -19,6 +19,10 @@ def call(Map cfg) {
     // whatever's rendering it live) proved impractically slow in a real run; this is
     // a much safer starting point to calibrate up from. See the README caveat.
     def logFloodSizeMb = (cfg.logFloodSizeMb ?: 50) as int
+    // How many times each branch re-runs the *real* mvnw verify, not synthetic
+    // flood text — genuine Maven/JVM output repeated, as a second, complementary
+    // way to generate concurrent JENKINS_HOME log pressure alongside Log flood.
+    def integrationTestRepeat = (cfg.integrationTestRepeat ?: 1) as int
     def workloadRepo = cfg.workloadRepo ?: 'https://github.com/spring-petclinic/spring-petclinic-rest'
     def workloadBranch = cfg.workloadBranch ?: 'master'
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
@@ -78,9 +82,20 @@ def call(Map cfg) {
                     // not as a stand-in for real ITs. `package` (part of the lifecycle
                     // verify runs through) is what produces target/*.jar for the stages
                     // that follow.
-                    bench.timed("integration-test-${i}") {
-                        dir('workload') {
-                            sh "MAVEN_CONFIG='' ./mvnw -B -Dmaven.repo.local=${mvnRepo} verify"
+                    //
+                    // integrationTestRepeat > 1 re-runs this real command multiple times —
+                    // genuine Maven/JVM console output repeated, not synthetic flood text,
+                    // as another source of real concurrent JENKINS_HOME log pressure when
+                    // combined with CONCURRENCY branches. Label stays exactly
+                    // "integration-test-${i}" at the default (repeat=1) so existing CSV
+                    // data/aggregation isn't fragmented; only repeat>1 introduces the
+                    // "-rep-N" suffix.
+                    for (int rep = 1; rep <= integrationTestRepeat; rep++) {
+                        def repLabel = (integrationTestRepeat == 1) ? "integration-test-${i}" : "integration-test-${i}-rep-${rep}"
+                        bench.timed(repLabel) {
+                            dir('workload') {
+                                sh "MAVEN_CONFIG='' ./mvnw -B -Dmaven.repo.local=${mvnRepo} verify"
+                            }
                         }
                     }
                     archiveArtifacts artifacts: 'workload/target/*.jar', fingerprint: true, allowEmptyArchive: true

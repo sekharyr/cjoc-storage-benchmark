@@ -62,7 +62,8 @@ results/                         run output lands here (gitignored contents)
    you pick the script path). That gives you 3 controllers × 2 durability
    settings = 6 jobs total, each parametrized by `CONCURRENCY`, `COLD_CACHE`,
    `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_MB`,
-   and `STORAGE_RESOURCE_ID` for the rest of the matrix.
+   `STORAGE_RESOURCE_ID`, and `INTEGRATION_TEST_REPEAT` for the rest of the
+   matrix.
 5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
    sidecar container (`buildctl` talking to it over `localhost`, since
@@ -170,6 +171,15 @@ one(s) relevant to what you're checking).
   CloudWatch data for the same time window before concluding the storage
   classes perform the same — it could mean the PVCs/StorageClasses aren't as
   differentiated as expected, not that this pipeline failed to measure them.
+- `INTEGRATION_TEST_REPEAT > 1` is a second, complementary way to generate
+  real (not synthetic) concurrent JENKINS_HOME log pressure — it re-runs the
+  actual `mvnw verify` command per branch, so the genuine Maven/JVM console
+  output (not agent-local disk I/O — the *test execution* is still
+  agent-local, only its console output streams to the controller) repeats
+  and streams to the controller multiple times per branch. Labels become
+  `integration-test-${i}-rep-${rep}` once repeat > 1; at the default
+  (repeat=1) the label is unchanged from before, so existing CSVs still
+  aggregate correctly.
 - Total `Log flood` volume is `CONCURRENCY × LOG_FLOOD_SIZE_MB` MB — do that
   arithmetic against the controller's actual available disk before pushing
   either value very high, since this is a fixed, deliberate volume rather
