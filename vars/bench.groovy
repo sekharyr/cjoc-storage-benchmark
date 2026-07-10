@@ -43,9 +43,15 @@ def publishMetrics(String storageClass) {
     }
     archiveArtifacts artifacts: metricsFile, fingerprint: true
     def destDir = "results/${storageClass}"
-    sh "mkdir -p ${destDir}"
-    sh "cp ${metricsFile} ${destDir}/${env.BUILD_TAG}.csv"
-    echo "[bench] published metrics to ${destDir}/${env.BUILD_TAG}.csv"
+    // BUILD_TAG inherits the job name, which can contain spaces/other
+    // shell-hostile chars (e.g. a job named "FSX HA Pipeline" yields
+    // "jenkins-FSX HA Pipeline-6"). Unquoted in an sh cp that made the shell
+    // word-split the destination and cp fail. Sanitize it to a safe filename
+    // AND quote the sh args so it's robust regardless of the job name.
+    def safeTag = (env.BUILD_TAG ?: 'build').replaceAll(/[^A-Za-z0-9._-]/, '_')
+    sh "mkdir -p '${destDir}'"
+    sh "cp '${metricsFile}' '${destDir}/${safeTag}.csv'"
+    echo "[bench] published metrics to ${destDir}/${safeTag}.csv"
 }
 
 // Turns collect-cloudwatch.sh's raw per-metric JSON into actual IOPS/MB-per-sec
