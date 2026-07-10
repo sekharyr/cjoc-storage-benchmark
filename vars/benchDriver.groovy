@@ -16,7 +16,7 @@
 
 def call(Map cfg) {
     def jobCount = (cfg.jobCount ?: 5) as int
-    def buildIterations = (cfg.buildIterations ?: 3) as int
+    def buildIterations = (cfg.buildIterations ?: 2) as int
     def jobNamePrefix = cfg.jobNamePrefix ?: 'bench-target'
 
     def branches = [:]
