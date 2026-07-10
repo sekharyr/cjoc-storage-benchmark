@@ -10,3 +10,9 @@ __pycache__/
 *.pyc
 
 .DS_Store
+
+# Claude Code local session config
+.claude/
+
+# Transient docx safety backups (BACKUP-<timestamp>)
+*.BACKUP-*.docx

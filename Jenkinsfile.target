@@ -1,0 +1,20 @@
+// Scripted pipeline — what each of the JOB_COUNT jobs created by
+// benchJobSprawl actually runs, once per trigger from an orchestrator's
+// benchDriver fan-out (see Jenkinsfile.orchestrator). Not run directly by a
+// human — benchJobSprawl points every job it creates at this file via
+// scriptPath, and benchDriver supplies UNIQUE_STAMP on every trigger.
+@Library('cjoc-storage-benchmark') _
+
+properties([
+    parameters([
+        string(name: 'UNIQUE_STAMP', defaultValue: '', description: 'Unique value baked into this build\'s one artifact — supplied by benchDriver, not meant to be set by hand'),
+        booleanParam(name: 'REALISTIC_SERVICE_MODE', defaultValue: false, description: 'Off (default) = minimal per-build work, just enough to produce one uniquely-stamped, fingerprinted artifact. On = also runs the full unit-test/integration-test/docker/soak sequence, for the separate "does this storage choice bottleneck a real build" question.')
+    ]),
+    buildDiscarder(logRotator(numToKeepStr: '5'))
+])
+
+benchStages(
+    agentLabel: 'bench-agent',
+    uniqueStamp: params.UNIQUE_STAMP,
+    realisticServiceMode: params.REALISTIC_SERVICE_MODE
+)

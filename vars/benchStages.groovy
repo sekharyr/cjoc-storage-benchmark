@@ -11,6 +11,33 @@
 // repo isn't the thing whose I/O you're trying to measure.
 
 def call(Map cfg) {
+    // "Minimal mode" — used by Jenkinsfile.target (the many sprawled target
+    // jobs vars/benchDriver.groovy fans builds out to, one per job per
+    // iteration). Produces one small, uniquely-stamped, fingerprinted
+    // artifact — the cheapest possible agent-side action that still creates
+    // a genuine new controller-side build directory + fingerprint entry per
+    // invocation, instead of relying on one build's internal parallelism or
+    // output size (see STORAGE-OPTIONS.md §11/§12). Falls through to the
+    // full pipeline below only if realisticServiceMode is explicitly set,
+    // for the separate "does this bottleneck a real build" question.
+    // Existing callers (Jenkinsfile / Jenkinsfile.max-survivability) never
+    // pass uniqueStamp, so this branch is a no-op for them.
+    if (cfg.containsKey('uniqueStamp')) {
+        node(cfg.agentLabel ?: 'bench-agent') {
+            stage('Stamp artifact') {
+                bench.timed('stamp-artifact') {
+                    writeFile file: 'stamp.txt', text: "${cfg.uniqueStamp}"
+                    archiveArtifacts artifacts: 'stamp.txt', fingerprint: true
+                }
+            }
+        }
+        if (!cfg.realisticServiceMode) {
+            return
+        }
+        // else fall through — realisticServiceMode runs the full pipeline
+        // below in addition to the stamp already archived above.
+    }
+
     def agentLabel = cfg.agentLabel ?: 'bench-agent'
     def concurrency = (cfg.concurrency ?: '1') as int
     def soakSeconds = cfg.soakDurationSeconds ?: 120
@@ -36,19 +63,22 @@ def call(Map cfg) {
     def dockerhubRepo = cfg.dockerhubRepo ?: 'sekharyr/cjoc-storage-benchmark'
     def trivyHardFail = cfg.trivyHardFail ?: false
     def trivySeverity = cfg.trivySeverity ?: 'CRITICAL,HIGH'
-    // Hardcoded to this specific 3-controller fleet's actual AWS resource IDs
+    // Hardcoded to this specific 4-controller fleet's actual AWS resource IDs
     // (found via kubectl get pvc/pv + aws fsx describe-volumes against the real
     // cluster). Jenkinsfile/Jenkinsfile.max-survivability are the SAME file
-    // shared across all 3 controllers, so a single Jenkinsfile defaultValue
-    // can't hold three different IDs — STORAGE_CLASS already identifies which
+    // shared across all controllers, so a single Jenkinsfile defaultValue
+    // can't hold different IDs — STORAGE_CLASS already identifies which
     // controller a given job runs on, so default from that instead. An
     // explicit STORAGE_RESOURCE_ID param still overrides this if set. If these
     // controllers/volumes are ever recreated, these values go stale and need
     // updating here.
+    //   openzfs-sc    = mc-fsx3    FSx SINGLE_AZ_1  (128 MB/s, non-HA)
+    //   openzfs-ha-sc = mc-fsx-ha  FSx SINGLE_AZ_HA_2 (160 MB/s + L2ARC, storage-HA)
     def defaultStorageResourceIds = [
-        'ebs-gp3-sc': 'vol-01d464727c847df38',
-        'efs-sc'    : 'fs-0246a526db0adaedf',
-        'openzfs-sc': 'fs-01bbc0b1019aac1c4'
+        'ebs-gp3-sc'   : 'vol-01d464727c847df38',
+        'efs-sc'       : 'fs-0246a526db0adaedf',
+        'openzfs-sc'   : 'fs-01bbc0b1019aac1c4',
+        'openzfs-ha-sc': 'fs-05a991b7fe8fcc00f'
     ]
     def storageResourceId = cfg.storageResourceId ?: defaultStorageResourceIds[cfg.storageClass] ?: ''
     // Pinned together since buildctl and the buildkitd sidecar must be compatible versions.
@@ -212,12 +242,64 @@ def call(Map cfg) {
         // daemon anywhere. Scoped to this stage only (inheritFrom + a
         // distinct label) so the buildkitd sidecar isn't carried by every
         // other stage's pod.
+        //
+        // Rootless buildkitd (moby/buildkit:<version>-rootless), not
+        // privileged: true — uses a user namespace + fuse-overlayfs instead of
+        // CAP_SYS_ADMIN + kernel overlayfs, so the sidecar never gets host
+        // capabilities or device access. `--oci-worker-no-process-sandbox` is
+        // required specifically on Kubernetes, which has no equivalent to
+        // Docker's `--security-opt systempaths=unconfined` — see
+        // github.com/moby/buildkit/blob/master/docs/rootless.md and
+        // examples/kubernetes/pod.rootless.yaml in that repo (source for this
+        // config). That still requires seccompProfile/appArmorProfile:
+        // Unconfined on the container, which the Kubernetes plugin's
+        // containerTemplate() DSL has no parameter for — only the podTemplate
+        // `yaml:` escape hatch can express it, hence using that instead of
+        // `containers: [containerTemplate(...)]` here.
+        //
+        // appArmorProfile as a container securityContext field needs
+        // Kubernetes >= 1.30; on older clusters drop that block and use the
+        // pre-1.30 annotation instead: `container.apparmor.security.beta.
+        // kubernetes.io/buildkitd: unconfined` at the pod-metadata level.
+        //
+        // IMPORTANT — this does NOT clear the Pod Security Admission risk
+        // flagged in the README. Unconfined seccomp/AppArmor is disallowed
+        // under Kubernetes' `baseline` and `restricted` Pod Security Standards
+        // just like `privileged: true` was — rootless narrows what's being
+        // asked for (no host-level access, contained to a user namespace) but
+        // still needs a policy exemption on a `restricted`/`baseline`-enforcing
+        // namespace. Re-run `kubectl get ns cloudbees-agents -o
+        // jsonpath='{.metadata.labels}'` (see README) before assuming this
+        // unblocks scheduling — if it's still enforcing, Kaniko (needs neither
+        // privileged nor Unconfined seccomp/AppArmor) is the actual
+        // PSA-`restricted`-compliant alternative, not rootless BuildKit.
         def buildkitLabel = "${agentLabel}-buildkit"
-        podTemplate(label: buildkitLabel, inheritFrom: agentLabel, containers: [
-            containerTemplate(name: 'buildkitd', image: "moby/buildkit:${buildkitVersion}",
-                               privileged: true, command: 'buildkitd', args: '--addr tcp://0.0.0.0:1234',
-                               ttyEnabled: true)
-        ]) {
+        podTemplate(label: buildkitLabel, inheritFrom: agentLabel, yaml: """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: buildkitd
+      image: moby/buildkit:${buildkitVersion}-rootless
+      args:
+        - --addr
+        - tcp://0.0.0.0:1234
+        - --oci-worker-no-process-sandbox
+      tty: true
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+        appArmorProfile:
+          type: Unconfined
+        runAsUser: 1000
+        runAsGroup: 1000
+      volumeMounts:
+        - mountPath: /home/user/.local/share/buildkit
+          name: buildkitd-cache
+  volumes:
+    - name: buildkitd-cache
+      emptyDir: {}
+""") {
             node(buildkitLabel) {
                 unstash 'src'
                 unstash 'artifact-1'

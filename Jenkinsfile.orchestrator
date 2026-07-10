@@ -1,0 +1,56 @@
+// Scripted pipeline — one orchestrator job per (storage backend x durability
+// tier) combination. Does none of the storage-stressing work itself: it
+// seeds job sprawl (benchJobSprawl) and drives builds across the resulting
+// target jobs (benchDriver), then aggregates their metrics. See
+// STORAGE-OPTIONS.md §12 for the full design and why this two-layer shape
+// (orchestrator + many target jobs) exists instead of one job with
+// parallel branches.
+@Library('cjoc-storage-benchmark') _
+
+// Matches whichever durability tier this orchestrator instance is testing —
+// must be set here AND passed into benchJobSprawl below, since it's what
+// gets configured onto the target jobs (durabilityHint has to live on the
+// jobs that actually create builds/<n>/ directories on the controller under
+// test, not on this orchestrator).
+env.BENCH_DURABILITY_HINT = 'MAX_SURVIVABILITY'
+
+properties([
+    parameters([
+        choice(name: 'STORAGE_CLASS', choices: ['ebs-gp3-sc', 'efs-sc', 'openzfs-sc', 'openzfs-ha-sc'],
+               description: 'Informational label only — this job must already be scheduled onto the controller backed by this storage class'),
+        string(name: 'JOB_COUNT', defaultValue: '10', description: 'Number of target jobs to create/ensure exist (job-sprawl axis)'),
+        string(name: 'BUILD_ITERATIONS', defaultValue: '5', description: 'Number of times each target job gets triggered per run (build-frequency axis)'),
+        string(name: 'REPO_URL', defaultValue: 'https://github.com/sekharyr/cjoc-storage-benchmark', description: 'Repo containing Jenkinsfile.target for the target jobs'),
+        string(name: 'REPO_BRANCH', defaultValue: 'main', description: 'Branch of REPO_URL the target jobs should check out'),
+        string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'The AWS resource ID backing this controller\'s JENKINS_HOME PVC — used for CloudWatch collection, same convention as Jenkinsfile/Jenkinsfile.max-survivability')
+    ]),
+    durabilityHint(env.BENCH_DURABILITY_HINT),
+    buildDiscarder(logRotator(numToKeepStr: '5'))
+])
+
+node('bench-agent') {
+    def jobNamePrefix = "bench-target-${params.STORAGE_CLASS}-${env.BENCH_DURABILITY_HINT}"
+
+    stage('Seed job sprawl') {
+        benchJobSprawl(
+            jobCount: params.JOB_COUNT as int,
+            durabilityHint: env.BENCH_DURABILITY_HINT,
+            jobNamePrefix: jobNamePrefix,
+            repoUrl: params.REPO_URL,
+            repoBranch: params.REPO_BRANCH,
+            targetJenkinsfile: 'Jenkinsfile.target'
+        )
+    }
+
+    stage('Drive builds') {
+        benchDriver(
+            jobCount: params.JOB_COUNT as int,
+            buildIterations: params.BUILD_ITERATIONS as int,
+            jobNamePrefix: jobNamePrefix
+        )
+    }
+
+    stage('Publish metrics') {
+        bench.publishMetrics(params.STORAGE_CLASS)
+    }
+}

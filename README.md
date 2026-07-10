@@ -65,23 +65,39 @@ results/                         run output lands here (gitignored contents)
    `DOCKERHUB_REPO`, `TRIVY_HARD_FAIL`, `TRIVY_SEVERITY`, `LOG_FLOOD_SIZE_MB`,
    `STORAGE_RESOURCE_ID`, `INTEGRATION_TEST_REPEAT`, and `ARTIFACT_COPY_COUNT`
    for the rest of the matrix.
-5. **BuildKit sidecar, privileged-pod check.** No Docker daemon is needed
+5. **BuildKit sidecar, Pod Security check.** No Docker daemon is needed
    anywhere in this pipeline — `Docker publish` builds via a `moby/buildkit`
-   sidecar container (`buildctl` talking to it over `localhost`, since
-   sidecars share a pod's network namespace), scans the resulting OCI tarball
-   directly with `trivy`, and pushes with `crane` — chosen specifically
-   because `bench-agent` nodes may be containerd-only (no `/var/run/docker.sock`
-   to bind-mount at all, post-dockershim-removal). `vars/benchStages.groovy`
-   declares this sidecar inline via the Kubernetes plugin's `podTemplate` step,
-   scoped to just the `Docker publish` stage (`inheritFrom` your existing
-   `bench-agent` template) — nothing to configure by hand beyond one check:
-   the `buildkitd` container needs `privileged: true`, and Pod Security
-   Admission set to `restricted` on the `cloudbees-agents` namespace (or an
-   OPA/Gatekeeper policy) will silently block that pod from scheduling.
-   Confirm before running a job: `kubectl get ns cloudbees-agents -o
-   jsonpath='{.metadata.labels}'` — look for
-   `pod-security.kubernetes.io/enforce: restricted`; if present, either relax
-   it for this namespace or exempt this specific pod template.
+   **rootless** sidecar container (`buildctl` talking to it over `localhost`,
+   since sidecars share a pod's network namespace), scans the resulting OCI
+   tarball directly with `trivy`, and pushes with `crane` — chosen
+   specifically because `bench-agent` nodes may be containerd-only (no
+   `/var/run/docker.sock` to bind-mount at all, post-dockershim-removal).
+   `vars/benchStages.groovy` declares this sidecar inline via the Kubernetes
+   plugin's `podTemplate` step (using its raw `yaml:` form, not
+   `containerTemplate()`, since only `yaml:` can express the
+   `seccompProfile`/`appArmorProfile` settings rootless mode needs), scoped to
+   just the `Docker publish` stage (`inheritFrom` your existing `bench-agent`
+   template).
+   - **Why rootless, not `privileged: true`**: rootless buildkitd runs in a
+     user namespace with `fuse-overlayfs` instead of `CAP_SYS_ADMIN` + kernel
+     overlayfs, so the sidecar never gets host-level capabilities or device
+     access — a materially smaller blast radius than a privileged container.
+   - **This does not fully clear the Pod Security Admission risk**, though —
+     rootless mode requires `seccompProfile`/`appArmorProfile: Unconfined` on
+     Kubernetes (no equivalent to Docker's `--security-opt
+     systempaths=unconfined`), and `Unconfined` is disallowed under
+     Kubernetes' `baseline` *and* `restricted` Pod Security Standards, same as
+     `privileged: true` was. Confirm before running a job: `kubectl get ns
+     cloudbees-agents -o jsonpath='{.metadata.labels}'` — look for
+     `pod-security.kubernetes.io/enforce: restricted` or `baseline`. If
+     present, this stage still needs a policy exemption for this
+     namespace/pod template — or switch this stage to Kaniko, which needs
+     neither privileged nor Unconfined seccomp/AppArmor and is the actual
+     PSA-`restricted`-compliant option, unlike rootless BuildKit.
+   - `appArmorProfile` as a container `securityContext` field needs
+     Kubernetes >= 1.30; on older clusters, drop that block and use the
+     pre-1.30 pod-annotation form instead (`container.apparmor.security.beta.
+     kubernetes.io/buildkitd: unconfined`).
 6. **Docker Hub credentials.** Create a Jenkins **Username with password**
    credential with ID `dockerhub-creds` — username is your Docker Hub
    namespace, password is a Docker Hub access token (Account Settings →
