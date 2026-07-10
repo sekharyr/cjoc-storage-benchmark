@@ -20,6 +20,7 @@ properties([
                description: 'Informational label only — this job must already be scheduled onto the controller backed by this storage class'),
         string(name: 'JOB_COUNT', defaultValue: '5', description: 'Number of target jobs to create/ensure exist (job-sprawl axis). Conservative default — benchDriver fans out JOB_COUNT x BUILD_ITERATIONS builds ALL AT ONCE (no throttle), and each concurrent build costs controller heap. 5 x 2 = 10 concurrent is a safe starting point on a ~1.5GB-heap controller; raise once you have confirmed headroom.'),
         string(name: 'BUILD_ITERATIONS', defaultValue: '2', description: 'Number of times each target job gets triggered per run (build-frequency axis). Kept low by default so the total concurrent fan-out (JOB_COUNT x BUILD_ITERATIONS) does not overwhelm the controller — see JOB_COUNT note.'),
+        string(name: 'MAX_CONCURRENT', defaultValue: '5', description: 'Hard cap on builds in flight at once — benchDriver drives the JOB_COUNT x BUILD_ITERATIONS builds in sequential windows of this size, so the controller never sees more than this many concurrent builds no matter how high the counts go. Protects controller heap. Set >= JOB_COUNT x BUILD_ITERATIONS to fan out all at once (old behaviour).'),
         string(name: 'REPO_URL', defaultValue: 'https://github.com/sekharyr/cjoc-storage-benchmark', description: 'Repo containing Jenkinsfile.target for the target jobs'),
         string(name: 'REPO_BRANCH', defaultValue: 'main', description: 'Branch of REPO_URL the target jobs should check out'),
         string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'The AWS resource ID backing this controller\'s JENKINS_HOME PVC — used for CloudWatch collection, same convention as Jenkinsfile/Jenkinsfile.max-survivability')
@@ -46,6 +47,7 @@ node('bench-agent') {
         benchDriver(
             jobCount: params.JOB_COUNT as int,
             buildIterations: params.BUILD_ITERATIONS as int,
+            maxConcurrent: params.MAX_CONCURRENT as int,
             jobNamePrefix: jobNamePrefix
         )
     }
