@@ -1,14 +1,37 @@
-// Scripted pipeline — what each of the JOB_COUNT jobs created by
-// benchJobSprawl actually runs, once per trigger from an orchestrator's
-// benchDriver fan-out (see Jenkinsfile.orchestrator). Not run directly by a
-// human — benchJobSprawl points every job it creates at this file via
-// scriptPath, and benchDriver supplies UNIQUE_STAMP on every trigger.
+// Scripted pipeline — what each of the JOB_COUNT jobs created by benchJobSprawl
+// runs, once per trigger from an orchestrator's benchDriver fan-out (see
+// Jenkinsfile.orchestrator). Not run directly by a human — benchJobSprawl points
+// every job it creates here via scriptPath; benchDriver supplies UNIQUE_STAMP (and,
+// when the orchestrator asks for it, REALISTIC_SERVICE_MODE + STORAGE_CLASS +
+// STORAGE_RESOURCE_ID) on each trigger.
+//
+// Mirrors Jenkinsfile's real-stage parameters so a target build can run the FULL
+// realistic service sequence via benchStages (checkout, unit/integration test,
+// log flood, docker build/trivy/push, soak, CloudWatch) — not just the minimal
+// stamp — while still receiving the per-trigger UNIQUE_STAMP that makes each
+// build's one archived artifact fingerprint-unique on the controller under test.
+// REALISTIC_SERVICE_MODE defaults OFF: the real stages are available, not
+// automatic, so the default orchestrator run stays controller-memory-safe.
+//
+// durabilityHint is intentionally NOT declared here — benchJobSprawl sets the
+// durability tier as a job property on each target job (that's the tier under
+// test); re-declaring it in this properties([]) block would fight that.
 @Library('cjoc-storage-benchmark') _
 
 properties([
     parameters([
         string(name: 'UNIQUE_STAMP', defaultValue: '', description: 'Unique value baked into this build\'s one artifact — supplied by benchDriver, not meant to be set by hand'),
-        booleanParam(name: 'REALISTIC_SERVICE_MODE', defaultValue: false, description: 'Off (default) = minimal per-build work, just enough to produce one uniquely-stamped, fingerprinted artifact. On = also runs the full unit-test/integration-test/docker/soak sequence, for the separate "does this storage choice bottleneck a real build" question.')
+        booleanParam(name: 'REALISTIC_SERVICE_MODE', defaultValue: false, description: 'Off (default) = minimal per-build work: produce one uniquely-stamped, fingerprinted artifact (the controller-side small-file storage signal). On = also run the full unit-test/integration-test/log-flood/docker/soak/CloudWatch sequence — the "does this storage choice bottleneck a real build" question. Heavier on the agent AND controller (log flood streams to the controller); defaults off for controller-memory safety.'),
+        string(name: 'STORAGE_CLASS', defaultValue: 'openzfs-sc', description: 'Informational label + selects the CloudWatch resource ID (see the map in vars/benchStages.groovy). Should match the controller this target job runs on — benchDriver passes it through from the orchestrator. Only used in realistic mode.'),
+        string(name: 'CONCURRENCY', defaultValue: '1', description: 'Parallel build branches inside one build (realistic mode only). Keep low — log flood + integration-test output scale with this and stream to the controller.'),
+        booleanParam(name: 'COLD_CACHE', defaultValue: true, description: 'Wipe workspace + Maven cache before building (realistic mode only)'),
+        string(name: 'DOCKERHUB_REPO', defaultValue: 'sekharyr/cjoc-storage-benchmark', description: 'Docker Hub repo (namespace/name) to tag and push the built workload image to (realistic mode only)'),
+        booleanParam(name: 'TRIVY_HARD_FAIL', defaultValue: false, description: 'Fail on Trivy-detected vulnerabilities instead of only reporting them (realistic mode only)'),
+        string(name: 'TRIVY_SEVERITY', defaultValue: 'CRITICAL,HIGH', description: 'Severities Trivy hard-fails on when TRIVY_HARD_FAIL is true'),
+        string(name: 'LOG_FLOOD_SIZE_MB', defaultValue: '50', description: 'MB of log-shaped console output each Log flood branch writes (realistic mode only). Streams to the controller, so total ~= CONCURRENCY x this — keep modest for controller-memory safety.'),
+        string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'AWS resource ID backing this controller\'s JENKINS_HOME PVC for CloudWatch collection; blank = auto-select from STORAGE_CLASS. Only used in realistic mode.'),
+        string(name: 'INTEGRATION_TEST_REPEAT', defaultValue: '1', description: 'Re-run the real mvnw verify this many times per branch (realistic mode only) — genuine Maven console output as controller log pressure'),
+        string(name: 'ARTIFACT_COPY_COUNT', defaultValue: '1', description: 'Archive this many copies of the built jar per branch (realistic mode only) — real binary writes that ACCUMULATE on JENKINS_HOME across builds')
     ]),
     buildDiscarder(logRotator(numToKeepStr: '5'))
 ])
@@ -16,5 +39,16 @@ properties([
 benchStages(
     agentLabel: 'bench-agent',
     uniqueStamp: params.UNIQUE_STAMP,
-    realisticServiceMode: params.REALISTIC_SERVICE_MODE
+    realisticServiceMode: params.REALISTIC_SERVICE_MODE,
+    storageClass: params.STORAGE_CLASS,
+    concurrency: params.CONCURRENCY,
+    coldCache: params.COLD_CACHE,
+    soakDurationSeconds: 120,
+    dockerhubRepo: params.DOCKERHUB_REPO,
+    trivyHardFail: params.TRIVY_HARD_FAIL,
+    trivySeverity: params.TRIVY_SEVERITY,
+    logFloodSizeMb: params.LOG_FLOOD_SIZE_MB,
+    storageResourceId: params.STORAGE_RESOURCE_ID,
+    integrationTestRepeat: params.INTEGRATION_TEST_REPEAT,
+    artifactCopyCount: params.ARTIFACT_COPY_COUNT
 )

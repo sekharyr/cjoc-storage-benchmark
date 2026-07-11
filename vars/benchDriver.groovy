@@ -25,6 +25,13 @@ def call(Map cfg) {
     // Set >= jobCount x buildIterations to effectively disable the cap.
     def maxConcurrent = (cfg.maxConcurrent ?: 5) as int
     if (maxConcurrent < 1) { maxConcurrent = 1 }
+    // Passed through to every triggered target build so the orchestrator can drive
+    // the full realistic sequence (not just the minimal stamp) and so CloudWatch
+    // collection in realistic mode attributes to the right AWS resource. Default
+    // realisticServiceMode=false keeps the fan-out controller-memory-safe.
+    def realisticServiceMode = cfg.realisticServiceMode ?: false
+    def storageClass = cfg.storageClass ?: ''
+    def storageResourceId = cfg.storageResourceId ?: ''
 
     // Build the full ordered task list first. Plain nested indexed for-loops,
     // not (1..n).each{} — same CPS-serialization reason as
@@ -42,7 +49,12 @@ def call(Map cfg) {
                 bench.timed(branchKey) {
                     build job: "${jobNamePrefix}-${jobIndex}",
                           wait: true,
-                          parameters: [string(name: 'UNIQUE_STAMP', value: stamp)]
+                          parameters: [
+                              string(name: 'UNIQUE_STAMP', value: stamp),
+                              booleanParam(name: 'REALISTIC_SERVICE_MODE', value: realisticServiceMode),
+                              string(name: 'STORAGE_CLASS', value: storageClass),
+                              string(name: 'STORAGE_RESOURCE_ID', value: storageResourceId)
+                          ]
                 }
             }]
         }
