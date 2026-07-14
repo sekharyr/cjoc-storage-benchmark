@@ -30,6 +30,7 @@ def call(Map cfg) {
     // collection in realistic mode attributes to the right AWS resource. Default
     // realisticServiceMode=false keeps the fan-out controller-memory-safe.
     def realisticServiceMode = cfg.realisticServiceMode ?: false
+    def artifactCopyCount = cfg.artifactCopyCount ?: '1'
     def storageClass = cfg.storageClass ?: ''
     def storageResourceId = cfg.storageResourceId ?: ''
 
@@ -52,6 +53,7 @@ def call(Map cfg) {
                           parameters: [
                               string(name: 'UNIQUE_STAMP', value: stamp),
                               booleanParam(name: 'REALISTIC_SERVICE_MODE', value: realisticServiceMode),
+                              string(name: 'ARTIFACT_COPY_COUNT', value: artifactCopyCount),
                               string(name: 'STORAGE_CLASS', value: storageClass),
                               string(name: 'STORAGE_RESOURCE_ID', value: storageResourceId)
                           ]
