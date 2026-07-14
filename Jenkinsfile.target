@@ -16,7 +16,12 @@
 // durabilityHint is intentionally NOT declared here — benchJobSprawl sets the
 // durability tier as a job property on each target job (that's the tier under
 // test); re-declaring it in this properties([]) block would fight that.
-@Library('cjoc-storage-benchmark') _
+// bench-test-lib is loaded ONLY here (the per-build target pipeline), not the
+// orchestrator, so its ~10k-file checkout is multiplied across every one of the
+// JOB_COUNT x BUILD_ITERATIONS target builds — the shared-library file-count load
+// axis (STORAGE-OPTIONS.md §12.4). It must be configured as a Global Pipeline
+// Library named 'bench-test-lib' on each controller that runs these target jobs.
+@Library(['cjoc-storage-benchmark', 'bench-test-lib']) _
 
 properties([
     parameters([
