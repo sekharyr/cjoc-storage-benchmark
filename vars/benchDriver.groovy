@@ -31,6 +31,8 @@ def call(Map cfg) {
     // realisticServiceMode=false keeps the fan-out controller-memory-safe.
     def realisticServiceMode = cfg.realisticServiceMode ?: false
     def artifactCopyCount = cfg.artifactCopyCount ?: '1'
+    def concurrency = cfg.concurrency ?: '1'
+    def logFloodSizeMb = cfg.logFloodSizeMb ?: '50'
     def storageClass = cfg.storageClass ?: ''
     def storageResourceId = cfg.storageResourceId ?: ''
 
@@ -54,6 +56,8 @@ def call(Map cfg) {
                               string(name: 'UNIQUE_STAMP', value: stamp),
                               booleanParam(name: 'REALISTIC_SERVICE_MODE', value: realisticServiceMode),
                               string(name: 'ARTIFACT_COPY_COUNT', value: artifactCopyCount),
+                              string(name: 'CONCURRENCY', value: concurrency),
+                              string(name: 'LOG_FLOOD_SIZE_MB', value: logFloodSizeMb),
                               string(name: 'STORAGE_CLASS', value: storageClass),
                               string(name: 'STORAGE_RESOURCE_ID', value: storageResourceId)
                           ]

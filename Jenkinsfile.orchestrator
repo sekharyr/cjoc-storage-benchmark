@@ -23,6 +23,8 @@ properties([
         string(name: 'MAX_CONCURRENT', defaultValue: '5', description: 'Hard cap on builds in flight at once — benchDriver drives the JOB_COUNT x BUILD_ITERATIONS builds in sequential windows of this size, so the controller never sees more than this many concurrent builds no matter how high the counts go. Protects controller heap. Set >= JOB_COUNT x BUILD_ITERATIONS to fan out all at once (old behaviour).'),
         booleanParam(name: 'REALISTIC_SERVICE_MODE', defaultValue: false, description: 'Off (default) = each triggered target build does minimal controller-side stamp work (the small-file storage signal; controller-memory-safe). On = each target build runs the FULL realistic service sequence (unit/integration test, log flood, docker build/trivy/push, soak, CloudWatch). Much heavier on agents AND controller (log flood streams to the controller) — combine with a low MAX_CONCURRENT.'),
         string(name: 'ARTIFACT_COPY_COUNT', defaultValue: '1', description: 'Realistic mode only: archive this many copies of the built ~60MB jar per target build (distinct files, real incompressible binary) into JENKINS_HOME/.../builds/<n>/archive. e.g. 34 -> ~2GB of artifact write per build. WARNING: accumulates across builds (bounded by buildDiscarder=5, so up to 5x2GB=10GB per job) and is multiplied by CONCURRENCY. Requires REALISTIC_SERVICE_MODE=true.'),
+        string(name: 'CONCURRENCY', defaultValue: '1', description: 'Realistic mode only: parallel build branches INSIDE each target build ("Layer 3" intra-build concurrency). Multiplies artifacts (CONCURRENCY x ARTIFACT_COPY_COUNT), log-flood volume (CONCURRENCY x LOG_FLOOD_SIZE_MB streamed to the controller), and agent pods used. Peak parallel work ~= MAX_CONCURRENT builds x CONCURRENCY branches — keep low; needs agent capacity.'),
+        string(name: 'LOG_FLOOD_SIZE_MB', defaultValue: '50', description: 'Realistic mode only: MB of log-shaped console each Log-flood branch streams to the controller; total per build ~= CONCURRENCY x this. Controller-memory lever — keep modest.'),
         string(name: 'REPO_URL', defaultValue: 'https://github.com/sekharyr/cjoc-storage-benchmark', description: 'Repo containing Jenkinsfile.target for the target jobs'),
         string(name: 'REPO_BRANCH', defaultValue: 'main', description: 'Branch of REPO_URL the target jobs should check out'),
         string(name: 'STORAGE_RESOURCE_ID', defaultValue: '', description: 'The AWS resource ID backing this controller\'s JENKINS_HOME PVC — used for CloudWatch collection, same convention as Jenkinsfile/Jenkinsfile.max-survivability')
@@ -52,6 +54,8 @@ node('bench-agent') {
             maxConcurrent: params.MAX_CONCURRENT as int,
             realisticServiceMode: params.REALISTIC_SERVICE_MODE,
             artifactCopyCount: params.ARTIFACT_COPY_COUNT,
+            concurrency: params.CONCURRENCY,
+            logFloodSizeMb: params.LOG_FLOOD_SIZE_MB,
             storageClass: params.STORAGE_CLASS,
             storageResourceId: params.STORAGE_RESOURCE_ID,
             jobNamePrefix: jobNamePrefix
