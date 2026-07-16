@@ -274,11 +274,32 @@ def call(Map cfg) {
         // privileged nor Unconfined seccomp/AppArmor) is the actual
         // PSA-`restricted`-compliant alternative, not rootless BuildKit.
         def buildkitLabel = "${agentLabel}-buildkit"
+        // inheritFrom does NOT deep-merge the parent template's raw `yaml:` fields
+        // (nodeSelector/tolerations/container resources) into this child's `yaml:` —
+        // the child block replaces them, so the buildkit pod would otherwise fall back
+        // to defaults (jnlp cpu=100m, no nodeSelector/toleration) and land BestEffort on
+        // whatever node it can (incl. the controller's node). So set placement + resources
+        // EXPLICITLY here. nodeSelector/toleration match the dedicated `agents` nodegroup.
         podTemplate(label: buildkitLabel, inheritFrom: agentLabel, yaml: """
 apiVersion: v1
 kind: Pod
 spec:
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: agents
+  tolerations:
+    - key: role
+      value: agent
+      effect: NoSchedule
+      operator: Equal
   containers:
+    - name: jnlp
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
     - name: buildkitd
       image: moby/buildkit:${buildkitVersion}-rootless
       args:
@@ -293,6 +314,13 @@ spec:
           type: Unconfined
         runAsUser: 1000
         runAsGroup: 1000
+      resources:
+        requests:
+          cpu: "750m"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "3Gi"
       volumeMounts:
         - mountPath: /home/user/.local/share/buildkit
           name: buildkitd-cache
